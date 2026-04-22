@@ -11,6 +11,8 @@
 #include <shellapi.h>
 #include <tlhelp32.h>
 #include <psapi.h>
+#include <string>
+#include <vector>
 
 #include <intrin.h>
 #pragma intrinsic(memset, memcpy,  strcat, strcmp, strcpy, strlen)
@@ -28,3 +30,6 @@
 #define COMMAND_RESOURCE "--resource="
 #define COMMAND_RESOURCE_INDEX "--rindex="
 #define COMMAND_FOLDER "--folder="
+
+BOOL ImportCustomIconFiles(HWND owner, UINT* copiedCount, UINT* convertedCount, UINT* failedCount, std::vector<std::wstring>* failedFiles);
+void RefreshInstalledShellMenu();

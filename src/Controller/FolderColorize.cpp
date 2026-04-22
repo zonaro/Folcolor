@@ -323,8 +323,8 @@ void SetFolderIconResource(LPCWSTR iconResourcePath, int iconIndex, LPWSTR folde
 // Note: Some applications might not process the broadcast WM_SETTINGCHANGE message and thus will still reference cached/old icons.
 void ResetWindowsIconCache()
 {
-	SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, NULL, NULL);
+	SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST | SHCNF_FLUSHNOWAIT, NULL, NULL);
 
 	DWORD_PTR smResult;
-	SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, 0, 0, SMTO_ABORTIFHUNG, 5000, &smResult);
+	SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM) L"Software\\Classes", SMTO_ABORTIFHUNG, 5000, &smResult);
 }

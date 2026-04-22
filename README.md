@@ -19,6 +19,7 @@ Especially useful for programmers/developers, artists, power users, etc., that m
 ## Installing
 1) Download the Folcolor.exe executable.  
 2) Run Folcolor.exe and click the "Install" button.
+3) Optionally click the "Import Icon" button to copy `.ico` and `.dll` files, or convert `.jpg` / `.jpeg` / `.png` images into `.ico` files inside the program `icons` folder.
 
 ### The dialog window
 ![Folcolor Logo](readme_assets/ui_screenshot_install.png)  
@@ -32,8 +33,9 @@ Now installed, simply right click on a folder, select "Color Folder", and select
 Folcolor also supports custom icon resources from the installation folder.
 
 1) Open the installation directory (normally under Program Files/Folcolor).
-2) Add your custom files under an `icons` subfolder.
-3) Supported formats are `.ico` and `.dll`.
+2) Add your custom files under an `icons` subfolder, or use the `Import Icon` button in the app.
+3) Supported import formats are `.ico`, `.dll`, `.jpg`, `.jpeg`, and `.png`.
+4) `.jpg`, `.jpeg`, and `.png` files are converted to `.ico` automatically during import.
 4) Subfolders inside `icons` become nested context submenus automatically.
 
 Context menu behavior:

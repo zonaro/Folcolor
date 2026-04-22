@@ -153,81 +153,19 @@ long fsize(FILE *fp)
 
 // ------------------------------------------------------------------------------------------------
 
-// Deletes a registry path and all its sub-keys and values
-// Based on: https://docs.microsoft.com/en-us/windows/win32/sysinfo/deleting-a-key-with-subkeys
-#define SUBKEY_BUFFER_SIZE 2048
-static BOOL RegDelnodeRecurse(__in HKEY rootKey, __out_bcount_z(SUBKEY_BUFFER_SIZE) LPSTR subKey)
-{
-	// First, see if we can delete the root key without having to recurse
-	LSTATUS lStatus = RegDeleteKeyA(rootKey, subKey);
-	if (lStatus == ERROR_SUCCESS)
-		return TRUE;
-
-	// Open key
-	HKEY regKey = NULL;
-	lStatus = RegOpenKeyExA(rootKey, subKey, 0, KEY_READ, &regKey);
-	if (lStatus != ERROR_SUCCESS)
-	{
-		if (lStatus == ERROR_FILE_NOT_FOUND)
-		{
-			//printf("Key not found.\n");
-			return TRUE;
-		}
-		else
-		{
-			//printf("Error opening key.\n");
-			return FALSE;
-		}
-	}
-
-	// Check for an ending slash and add one if it is missing.
-	LPSTR endPtr = (subKey + strlen(subKey));
-	if (*(endPtr - 1) != '\\')
-	{
-		*endPtr++ = '\\';
-		*endPtr = 0;
-	}
-
-	// Enumerate the keys
-	char name[MAX_PATH];
-	DWORD size = _countof(name);
-	FILETIME writeTime;
-	lStatus = RegEnumKeyExA(regKey, 0, name, &size, NULL, NULL, NULL, &writeTime);
-	if (lStatus == ERROR_SUCCESS)
-	{
-		do
-		{
-			*endPtr = 0;
-			errno_t er = strcat_s(subKey, SUBKEY_BUFFER_SIZE, name);
-			if (er != 0)
-				CRITICAL_API_ERRNO(strcat_s, er);
-			if (!RegDelnodeRecurse(rootKey, subKey))
-				break;
-
-			size = _countof(name);
-			lStatus = RegEnumKeyExA(regKey, 0, name, &size, NULL, NULL, NULL, &writeTime);
-
-		} while (lStatus == ERROR_SUCCESS);
-	}
-
-	endPtr--;
-	*endPtr = 0;
-
-	RegCloseKey(regKey);
-
-	// Try again to delete the root key
-	lStatus = RegDeleteKeyA(rootKey, subKey);
-	if (lStatus == ERROR_SUCCESS)
-		return TRUE;
-
-	return FALSE;
-}
-//
 BOOL DeleteRegistryPath(__in HKEY hKeyRoot, __in LPCSTR subKey)
 {
-	char subKeyBuffer[SUBKEY_BUFFER_SIZE];
-	errno_t er = strcpy_s(subKeyBuffer, _countof(subKeyBuffer), subKey);
-	if (er != 0)
-		CRITICAL_API_ERRNO(strcpy_s, er);
-	return RegDelnodeRecurse(hKeyRoot, subKeyBuffer);
+	LSTATUS lStatus = RegDeleteTreeA(hKeyRoot, subKey);
+	if ((lStatus != ERROR_SUCCESS) && (lStatus != ERROR_FILE_NOT_FOUND))
+	{
+		SetLastError(lStatus);
+		return FALSE;
+	}
+
+	lStatus = RegDeleteKeyA(hKeyRoot, subKey);
+	if ((lStatus == ERROR_SUCCESS) || (lStatus == ERROR_FILE_NOT_FOUND))
+		return TRUE;
+
+	SetLastError(lStatus);
+	return FALSE;
 }

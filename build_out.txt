@@ -1,0 +1,11 @@
+Versão do MSBuild 18.5.4+cb4e32d21 para .NET Framework
+
+  FolderColorize.cpp
+  Installer.cpp
+  main.cpp
+  Utility.cpp
+  Gerando código
+  Previous IPDB not found, fall back to full compilation.
+  All 371 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  Finalizada a geração de código
+  Controller.vcxproj -> D:\GIT\Folcolor\src\Controller\Win32\Release\Folcolor.exe
