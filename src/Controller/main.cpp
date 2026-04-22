@@ -432,14 +432,36 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 	{
 		if(pCmdLine && (wcslen(pCmdLine) > 0))
 		{
-			// Yes, get passed color index
-			LPWSTR indexPtr = wcsstr(pCmdLine, L"" COMMAND_ICON);
-			if (indexPtr)
+			int argc = 0;
+			LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+			if (argv && (argc > 1))
 			{
-				// Passed folder path			
-				LPWSTR folderPtr = wcsstr(pCmdLine, L"" COMMAND_FOLDER);				
-				if(folderPtr)
-					SetFolderColor(_wtoi(&indexPtr[SIZESTR(COMMAND_ICON)]), &folderPtr[SIZESTR(COMMAND_FOLDER)]);
+				int builtInIndex = -1;
+				int resourceIndex = 0;
+				LPCWSTR folderArg = NULL;
+				LPCWSTR resourceArg = NULL;
+
+				for (int i = 1; i < argc; i++)
+				{
+					if (wcsncmp(argv[i], L"" COMMAND_ICON, SIZESTR(COMMAND_ICON)) == 0)
+						builtInIndex = _wtoi(argv[i] + SIZESTR(COMMAND_ICON));
+					else if (wcsncmp(argv[i], L"" COMMAND_RESOURCE, SIZESTR(COMMAND_RESOURCE)) == 0)
+						resourceArg = argv[i] + SIZESTR(COMMAND_RESOURCE);
+					else if (wcsncmp(argv[i], L"" COMMAND_RESOURCE_INDEX, SIZESTR(COMMAND_RESOURCE_INDEX)) == 0)
+						resourceIndex = _wtoi(argv[i] + SIZESTR(COMMAND_RESOURCE_INDEX));
+					else if (wcsncmp(argv[i], L"" COMMAND_FOLDER, SIZESTR(COMMAND_FOLDER)) == 0)
+						folderArg = argv[i] + SIZESTR(COMMAND_FOLDER);
+				}
+
+				if (folderArg)
+				{
+					if (builtInIndex >= 0)
+						SetFolderColor(builtInIndex, (LPWSTR) folderArg);
+					else if (resourceArg && resourceArg[0])
+						SetFolderIconResource(resourceArg, resourceIndex, (LPWSTR) folderArg);
+				}
+
+				LocalFree(argv);
 			}
 
 			return EXIT_SUCCESS;

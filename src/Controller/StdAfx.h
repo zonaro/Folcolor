@@ -25,4 +25,6 @@
 #define REGISTRY_PATH "Directory\\shell\\Folcolor"
 
 #define COMMAND_ICON "--index="
+#define COMMAND_RESOURCE "--resource="
+#define COMMAND_RESOURCE_INDEX "--rindex="
 #define COMMAND_FOLDER "--folder="

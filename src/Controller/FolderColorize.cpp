@@ -222,6 +222,103 @@ void SetFolderColor(int index, LPWSTR folderPath)
 }
 
 
+// Set folder icon from an arbitrary resource path (ICO or DLL with index)
+void SetFolderIconResource(LPCWSTR iconResourcePath, int iconIndex, LPWSTR folderPath)
+{
+	if (!iconResourcePath || !iconResourcePath[0] || !folderPath || (iconIndex < 0))
+		return;
+
+	// Shouldn't happen, but verify it's an existing folder first
+	DWORD attr = GetFileAttributesW(folderPath);
+	if ((attr == INVALID_FILE_ATTRIBUTES) || !(attr & FILE_ATTRIBUTE_DIRECTORY))
+		return;
+
+	// Path to a "desktop.ini"
+	WCHAR initPath[MAX_PATH];
+	if (_snwprintf_s(initPath, MAX_PATH, (MAX_PATH-1), L"%s\\desktop.ini", folderPath) < 1)
+		CRITICAL("Path size limit error!");
+
+	// Folder already has system flag?
+	BOOL hasIniAlready = FALSE;
+	if (PathIsSystemFolderW(folderPath, 0))
+	{
+		// Yes, a "desktop.ini" there?
+		DWORD iniAttr = GetFileAttributesW(initPath);
+		hasIniAlready = ((iniAttr != INVALID_FILE_ATTRIBUTES) && !(iniAttr & FILE_ATTRIBUTE_DIRECTORY));
+		if (hasIniAlready)
+		{
+			// Yes, has an icon entry?
+			// SHGetSetFolderCustomSettings() read combines "IconFile", "IconIndex" and "IconResource" types.
+			SHFOLDERCUSTOMSETTINGS pfcs;
+			ZeroMemory(&pfcs, sizeof(SHFOLDERCUSTOMSETTINGS));
+			pfcs.dwSize = sizeof(SHFOLDERCUSTOMSETTINGS);
+			pfcs.dwMask = FCSM_ICONFILE;
+			WCHAR iconPath[MAX_PATH] = { 0 };
+			pfcs.pszIconFile = iconPath;
+			pfcs.cchIconFile = MAX_PATH;
+			if (SUCCEEDED(SHGetSetFolderCustomSettings(&pfcs, folderPath, FCS_READ)) && iconPath[0])
+			{
+				// Special folder icon path?
+				errno_t en = _wcslwr_s(iconPath);
+				if (en != 0)
+					CRITICAL_API_ERRNO(_wcslwr_s, en);
+
+				if (wcsncmp(iconPath + SIZESTR(L"C:"), L"\\windows\\", SIZESTR(L"\\windows\\")) == 0)
+				{
+					// Yes, abort
+					MessageBoxA(NULL,
+						PROJECT_NAME " detects this as possibly a special folder (I.E. \"Downloads\", \"Documents\", \"Music\", etc.) and is not supported since restoring them is complex.\n\n"
+						"If you really want to set the color/icon for this folder, manually edit or just delete the existing \"desktop.ini\" (hidden, system) file first.\n"
+						"And then if you want to restore a special system folder icon later, it CAN be done through manual restore steps (Web search on how).\n"
+						,
+						PROJECT_NAME " abort:", (MB_OK | MB_ICONERROR));
+					return;
+				}
+			}
+		}
+	}
+
+	// If the desktop.ini already exists we can't use SHGetSetFolderCustomSettings() if it has other settting because of a bug in it where it will wipe out
+	// other sections if "[.ShellClassInfo]" is not at the top.
+	if (hasIniAlready)
+	{
+		// Need to remove the old first to get quick icon refresh on at least Windows 10
+		RestoreFolderIcon(folderPath);
+
+		// If desktop.ini is still here it means there are settings that needed to be saved and will have to take the delayed refresh route,
+		// else we'll let it fall through and be recreated for the fast refresh option.
+		DWORD iniAttr = GetFileAttributesW(initPath);
+		if ((iniAttr != INVALID_FILE_ATTRIBUTES) && !(iniAttr & FILE_ATTRIBUTE_DIRECTORY))
+		{
+			WCHAR iconResource[MAX_PATH + 16];
+			if (_snwprintf_s(iconResource, _countof(iconResource), (_countof(iconResource)-1), L"%s,%d", iconResourcePath, iconIndex) < 1)
+				CRITICAL("Path size limit error!");
+
+			// Write our "IconResource" entry
+			WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", iconResource, initPath);
+
+			// Flush icon cache so the new icon setting take effect eventually
+			PathMakeSystemFolderW(folderPath);
+			ResetWindowsIconCache();
+			return;
+		}
+	}
+
+	// Let SHGetSetFolderCustomSettings() do the work of setting the folder as system, creating the "desktop.ini", etc.
+	SHFOLDERCUSTOMSETTINGS pfcs;
+	ZeroMemory(&pfcs, sizeof(SHFOLDERCUSTOMSETTINGS));
+	pfcs.dwSize = sizeof(SHFOLDERCUSTOMSETTINGS);
+	pfcs.dwMask = FCSM_ICONFILE;
+	pfcs.pszIconFile = (LPWSTR) iconResourcePath;
+	pfcs.cchIconFile = 0;
+	pfcs.iIconIndex = iconIndex;
+
+	HRESULT hr = SHGetSetFolderCustomSettings(&pfcs, folderPath, FCS_FORCEWRITE);
+	if (FAILED(hr))
+		CRITICAL_API_FAIL(SHGetSetFolderCustomSettings, HRESULT_CODE(hr));
+}
+
+
 // Reset the Windows icon cache and notify all applications that it changed
 // Note: Some applications might not process the broadcast WM_SETTINGCHANGE message and thus will still reference cached/old icons.
 void ResetWindowsIconCache()

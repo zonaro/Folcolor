@@ -14,4 +14,5 @@
 
 
 void SetFolderColor(int index, LPWSTR folderPath);
+void SetFolderIconResource(LPCWSTR iconResourcePath, int iconIndex, LPWSTR folderPath);
 void ResetWindowsIconCache();

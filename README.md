@@ -28,6 +28,19 @@ Now installed, simply right click on a folder, select "Color Folder", and select
 
 ![Folcolor Logo](readme_assets/set_game_folder_white_anim.gif)
 
+## Custom icon packs
+Folcolor also supports custom icon resources from the installation folder.
+
+1) Open the installation directory (normally under Program Files/Folcolor).
+2) Add your custom files under an `icons` subfolder.
+3) Supported formats are `.ico` and `.dll`.
+4) Subfolders inside `icons` become nested context submenus automatically.
+
+Context menu behavior:
+* `Colors` submenu is always shown first with the 14 embedded built-in colors.
+* `Custom` submenu is shown after `Colors` when user resources are found.
+* For `.dll` files, all icon entries from that DLL are listed in a dedicated submenu.
+
 ## Features
 * Selection of 14 colors based on the pleasant Google Material Design palette.  
 * 100% Free Open Source. You can known what it's made of and freely modify, remove, or add features to it.  
