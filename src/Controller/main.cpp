@@ -2,6 +2,7 @@
 // MIT license https://opensource.org/licenses/MIT
 #include "StdAfx.h"
 #include <versionhelpers.h>
+#include <cwctype>
 #include "resource.h"
 #include "FolderColorize.h"
 #include "GeneratedColorNames.h"
@@ -107,10 +108,8 @@ static BOOL AreSamePath(LPCWSTR leftPath, LPCWSTR rightPath)
  */
 static void UpdateInstallDependentControls(HWND hWnd)
 {
-	EnableWindow(GetDlgItem(hWnd, IDC_IMPORT_ICON), isInstalled);
 	EnableWindow(GetDlgItem(hWnd, IDC_REINSTALL), (isInstalled && isRunningOutsideInstallFolder));
 }
-
 
 /**
  * Build a compact user message listing files that failed to import.
@@ -207,6 +206,15 @@ static const LPCWSTR kSystemDlls[] =
 };
 
 static std::vector<PickerCategory> gPickerCategories;
+struct PickerVisibleItem
+{
+	int categoryIndex;
+	int itemIndex;
+	std::wstring displayLabel;
+};
+
+static std::vector<PickerVisibleItem> gPickerVisibleItems;
+static std::wstring gPickerSearchQuery;
 static std::wstring gPickerTargetFolder;
 
 #define IDC_PICKER_CATEGORY 2001
@@ -215,6 +223,93 @@ static std::wstring gPickerTargetFolder;
 #define IDC_PICKER_RESTORE 2004
 #define IDC_PICKER_CANCEL 2005
 #define IDC_PICKER_IMPORT 2006
+#define IDC_PICKER_SEARCH 2007
+#define IDC_PICKER_OPEN_ICONS 2008
+
+/**
+ * Return lowercase copy for case-insensitive matching.
+ */
+static std::wstring ToLowerCopy(const std::wstring& value)
+{
+	std::wstring out = value;
+	for (size_t i = 0; i < out.size(); i++)
+		out[i] = (WCHAR) towlower(out[i]);
+	return out;
+}
+
+
+/**
+ * Refresh current search query from the search box.
+ */
+static void UpdatePickerSearchQuery(HWND hWnd)
+{
+	HWND hSearch = GetDlgItem(hWnd, IDC_PICKER_SEARCH);
+	if (!hSearch)
+	{
+		gPickerSearchQuery.clear();
+		return;
+	}
+
+	int len = GetWindowTextLengthW(hSearch);
+	if (len <= 0)
+	{
+		gPickerSearchQuery.clear();
+		return;
+	}
+
+	std::vector<WCHAR> buffer((size_t) len + 1, 0);
+	GetWindowTextW(hSearch, &buffer[0], len + 1);
+	gPickerSearchQuery = ToLowerCopy(std::wstring(&buffer[0]));
+}
+
+
+/**
+ * Rebuild visible items based on selected category or global search.
+ */
+static void RebuildPickerVisibleItems(int categoryIndex)
+{
+	gPickerVisibleItems.clear();
+
+	if (gPickerSearchQuery.empty())
+	{
+		if ((categoryIndex < 0) || (categoryIndex >= (int) gPickerCategories.size()))
+			return;
+
+		const PickerCategory& cat = gPickerCategories[categoryIndex];
+		for (size_t i = 0; i < cat.items.size(); i++)
+		{
+			PickerVisibleItem visible = {};
+			visible.categoryIndex = categoryIndex;
+			visible.itemIndex = (int) i;
+			visible.displayLabel = cat.items[i].label;
+			gPickerVisibleItems.push_back(visible);
+		}
+		return;
+	}
+
+	for (size_t c = 0; c < gPickerCategories.size(); c++)
+	{
+		const PickerCategory& cat = gPickerCategories[c];
+		std::wstring lowerCategory = ToLowerCopy(cat.name);
+
+		for (size_t i = 0; i < cat.items.size(); i++)
+		{
+			const PickerItem& item = cat.items[i];
+			std::wstring lowerLabel = ToLowerCopy(item.label);
+			if ((lowerLabel.find(gPickerSearchQuery) == std::wstring::npos) &&
+				(lowerCategory.find(gPickerSearchQuery) == std::wstring::npos))
+			{
+				continue;
+			}
+
+			PickerVisibleItem visible = {};
+			visible.categoryIndex = (int) c;
+			visible.itemIndex = (int) i;
+			visible.displayLabel = L"[" + cat.name + L"] " + item.label;
+			gPickerVisibleItems.push_back(visible);
+		}
+	}
+}
 
 
 /**
@@ -427,18 +522,15 @@ static void PopulatePickerItems(HWND hWnd, int categoryIndex)
 	HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
 	SendMessageW(hItem, LB_RESETCONTENT, 0, 0);
 
-	if ((categoryIndex < 0) || (categoryIndex >= (int) gPickerCategories.size()))
-		return;
-
-	const PickerCategory& cat = gPickerCategories[categoryIndex];
-	for (size_t i = 0; i < cat.items.size(); i++)
+	RebuildPickerVisibleItems(categoryIndex);
+	for (size_t i = 0; i < gPickerVisibleItems.size(); i++)
 	{
-		LRESULT idx = SendMessageW(hItem, LB_ADDSTRING, 0, (LPARAM) cat.items[i].label.c_str());
+		LRESULT idx = SendMessageW(hItem, LB_ADDSTRING, 0, (LPARAM) gPickerVisibleItems[i].displayLabel.c_str());
 		if (idx != LB_ERR)
 			SendMessageW(hItem, LB_SETITEMDATA, (WPARAM) idx, (LPARAM) i);
 	}
 
-	if (!cat.items.empty())
+	if (!gPickerVisibleItems.empty())
 		SendMessageW(hItem, LB_SETCURSEL, 0, 0);
 }
 
@@ -457,12 +549,14 @@ static void PopulatePickerCategories(HWND hWnd)
 	if (!gPickerCategories.empty())
 	{
 		SendMessageW(hCat, LB_SETCURSEL, 0, 0);
+		UpdatePickerSearchQuery(hWnd);
 		PopulatePickerItems(hWnd, 0);
 	}
 	else
 	{
 		HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
 		SendMessageW(hItem, LB_RESETCONTENT, 0, 0);
+		gPickerVisibleItems.clear();
 	}
 }
 
@@ -549,7 +643,11 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 				12, 32, 250, 360, hWnd, (HMENU) IDC_PICKER_CATEGORY, NULL, NULL);
 
 			CreateWindowW(L"STATIC", L"Icons", WS_CHILD | WS_VISIBLE,
-				274, 12, 300, 18, hWnd, NULL, NULL, NULL);
+				274, 12, 80, 18, hWnd, NULL, NULL, NULL);
+			CreateWindowW(L"STATIC", L"Search", WS_CHILD | WS_VISIBLE,
+				426, 12, 48, 18, hWnd, NULL, NULL, NULL);
+			CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP,
+				478, 10, 176, 22, hWnd, (HMENU) IDC_PICKER_SEARCH, NULL, NULL);
 			CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER | LBS_OWNERDRAWFIXED,
 				274, 32, 380, 360, hWnd, (HMENU) IDC_PICKER_ITEM, NULL, NULL);
 
@@ -557,6 +655,8 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 				274, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_APPLY, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Import Icon", WS_CHILD | WS_VISIBLE,
 				375, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_IMPORT, NULL, NULL);
+			CreateWindowW(L"BUTTON", L"Open Icons Folder", WS_CHILD | WS_VISIBLE,
+				138, 404, 130, 28, hWnd, (HMENU) IDC_PICKER_OPEN_ICONS, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Restore Default", WS_CHILD | WS_VISIBLE,
 				12, 404, 120, 28, hWnd, (HMENU) IDC_PICKER_RESTORE, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
@@ -595,16 +695,18 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 
 			FillRect(di->hDC, &di->rcItem, bgBrush);
 
-			HWND hCat = GetDlgItem(hWnd, IDC_PICKER_CATEGORY);
-			int catSel = (int) SendMessageW(hCat, LB_GETCURSEL, 0, 0);
-			if ((catSel < 0) || (catSel >= (int) gPickerCategories.size()))
+			int visibleIndex = (int) SendMessageW(di->hwndItem, LB_GETITEMDATA, di->itemID, 0);
+			if ((visibleIndex < 0) || (visibleIndex >= (int) gPickerVisibleItems.size()))
 				return TRUE;
 
-			int itemIndex = (int) SendMessageW(di->hwndItem, LB_GETITEMDATA, di->itemID, 0);
-			if ((itemIndex < 0) || (itemIndex >= (int) gPickerCategories[catSel].items.size()))
+			const PickerVisibleItem& visibleItem = gPickerVisibleItems[visibleIndex];
+			if ((visibleItem.categoryIndex < 0) || (visibleItem.categoryIndex >= (int) gPickerCategories.size()))
 				return TRUE;
 
-			PickerItem& item = gPickerCategories[catSel].items[itemIndex];
+			if ((visibleItem.itemIndex < 0) || (visibleItem.itemIndex >= (int) gPickerCategories[visibleItem.categoryIndex].items.size()))
+				return TRUE;
+
+			PickerItem& item = gPickerCategories[visibleItem.categoryIndex].items[visibleItem.itemIndex];
 			HICON hIcon = ResolvePickerItemIcon(item);
 
 			int iconX = di->rcItem.left + 4;
@@ -616,7 +718,7 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 			textRc.left += 26;
 			SetBkMode(di->hDC, TRANSPARENT);
 			SetTextColor(di->hDC, textColor);
-			DrawTextW(di->hDC, item.label.c_str(), -1, &textRc, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+			DrawTextW(di->hDC, gPickerVisibleItems[visibleIndex].displayLabel.c_str(), -1, &textRc, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
 			if (di->itemState & ODS_FOCUS)
 				DrawFocusRect(di->hDC, &di->rcItem);
@@ -629,6 +731,16 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 		{
 			switch (LOWORD(wParam))
 			{
+				case IDC_PICKER_SEARCH:
+				if (HIWORD(wParam) == EN_CHANGE)
+				{
+					UpdatePickerSearchQuery(hWnd);
+					HWND hCat = GetDlgItem(hWnd, IDC_PICKER_CATEGORY);
+					int sel = (int) SendMessageW(hCat, LB_GETCURSEL, 0, 0);
+					PopulatePickerItems(hWnd, sel);
+				}
+				break;
+
 				case IDC_PICKER_CATEGORY:
 				if (HIWORD(wParam) == LBN_SELCHANGE)
 				{
@@ -639,21 +751,26 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 
 				case IDC_PICKER_APPLY:
 				{
-					HWND hCat = GetDlgItem(hWnd, IDC_PICKER_CATEGORY);
 					HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
-					int catSel = (int) SendMessageW(hCat, LB_GETCURSEL, 0, 0);
 					int itemSel = (int) SendMessageW(hItem, LB_GETCURSEL, 0, 0);
-					if ((catSel == LB_ERR) || (itemSel == LB_ERR) || (catSel < 0) || (catSel >= (int) gPickerCategories.size()))
+					if (itemSel == LB_ERR)
 					{
-						MessageBoxA(hWnd, "Select a category and an icon.", "Info:", MB_OK | MB_ICONINFORMATION);
+						MessageBoxA(hWnd, "Select an icon.", "Info:", MB_OK | MB_ICONINFORMATION);
 						break;
 					}
 
-					int itemIndex = (int) SendMessageW(hItem, LB_GETITEMDATA, (WPARAM) itemSel, 0);
-					if ((itemIndex < 0) || (itemIndex >= (int) gPickerCategories[catSel].items.size()))
+					int visibleIndex = (int) SendMessageW(hItem, LB_GETITEMDATA, (WPARAM) itemSel, 0);
+					if ((visibleIndex < 0) || (visibleIndex >= (int) gPickerVisibleItems.size()))
 						break;
 
-					const PickerItem& item = gPickerCategories[catSel].items[itemIndex];
+					const PickerVisibleItem& visibleItem = gPickerVisibleItems[visibleIndex];
+					if ((visibleItem.categoryIndex < 0) || (visibleItem.categoryIndex >= (int) gPickerCategories.size()))
+						break;
+
+					if ((visibleItem.itemIndex < 0) || (visibleItem.itemIndex >= (int) gPickerCategories[visibleItem.categoryIndex].items.size()))
+						break;
+
+					const PickerItem& item = gPickerCategories[visibleItem.categoryIndex].items[visibleItem.itemIndex];
 					if (item.isBuiltIn)
 					{
 						// Apply built-in colors using the currently running EXE resources.
@@ -697,6 +814,26 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 				}
 				break;
 
+				case IDC_PICKER_OPEN_ICONS:
+				{
+					WCHAR iconsPath[MAX_PATH];
+					if (_snwprintf_s(iconsPath, _countof(iconsPath), (_countof(iconsPath) - 1), L"%sicons", myPathGlobal) < 1)
+					{
+						MessageBoxA(hWnd, "Unable to build icons folder path.", "Error:", (MB_OK | MB_ICONERROR));
+						break;
+					}
+
+					if (!EnsureDirectoryExists(iconsPath))
+					{
+						MessageBoxA(hWnd, "Unable to create icons folder.", "Error:", (MB_OK | MB_ICONERROR));
+						break;
+					}
+
+					if (!OpenDirectoryInExplorer(iconsPath))
+						MessageBoxA(hWnd, "Unable to open icons folder.", "Error:", (MB_OK | MB_ICONERROR));
+				}
+				break;
+
 				case IDC_PICKER_RESTORE:
 				SetFolderColor(COLOR_ICON_COUNT, (LPWSTR) gPickerTargetFolder.c_str());
 				ResetWindowsIconCache();
@@ -716,6 +853,8 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 
 		case WM_DESTROY:
 		ReleasePickerIcons();
+		gPickerVisibleItems.clear();
+		gPickerSearchQuery.clear();
 		PostQuitMessage(0);
 		return 0;
 	}
@@ -733,6 +872,8 @@ static int ShowFolderIconPicker(LPCWSTR folderPath)
 		return EXIT_FAILURE;
 
 	gPickerTargetFolder = folderPath;
+	gPickerSearchQuery.clear();
+	gPickerVisibleItems.clear();
 	BuildPickerCategories(gPickerCategories);
 
 	WNDCLASSW wc = {};
@@ -1004,8 +1145,6 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 					SendMessageA(GetDlgItem(hWnd, IDC_REFRESH), WM_SETFONT, WPARAM(buttonFont), TRUE);
 						SendMessageA(GetDlgItem(hWnd, IDC_REINSTALL), WM_SETFONT, WPARAM(buttonFont), TRUE);
 					SendMessageA(GetDlgItem(hWnd, IDC_OPEN_INSTALL_FOLDER), WM_SETFONT, WPARAM(buttonFont), TRUE);
-					SendMessageA(GetDlgItem(hWnd, IDC_IMPORT_ICON), WM_SETFONT, WPARAM(buttonFont), TRUE);
-					SendMessageA(GetDlgItem(hWnd, IDC_OPEN_ICONS_FOLDER), WM_SETFONT, WPARAM(buttonFont), TRUE);
 				}
 			}
 
@@ -1089,55 +1228,6 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 					if (!OpenDirectoryInExplorer(myPathGlobal))
 						MessageBoxA(hWnd, "Unable to open install folder.", "Error:", (MB_OK | MB_ICONERROR));
 
-					return (INT_PTR) TRUE;
-				}
-				break;
-
-				case IDC_OPEN_ICONS_FOLDER:
-				{
-					WCHAR iconsPath[MAX_PATH];
-					if (_snwprintf_s(iconsPath, _countof(iconsPath), (_countof(iconsPath) - 1), L"%sicons", myPathGlobal) < 1)
-					{
-						MessageBoxA(hWnd, "Unable to build icons folder path.", "Error:", (MB_OK | MB_ICONERROR));
-						return (INT_PTR) TRUE;
-					}
-
-					if (!EnsureDirectoryExists(iconsPath))
-					{
-						MessageBoxA(hWnd, "Unable to create icons folder.", "Error:", (MB_OK | MB_ICONERROR));
-						return (INT_PTR) TRUE;
-					}
-
-					if (!OpenDirectoryInExplorer(iconsPath))
-						MessageBoxA(hWnd, "Unable to open icons folder.", "Error:", (MB_OK | MB_ICONERROR));
-
-					return (INT_PTR) TRUE;
-				}
-				break;
-
-				case IDC_IMPORT_ICON:
-				{
-					UINT copiedCount = 0;
-					UINT convertedCount = 0;
-					UINT failedCount = 0;
-					std::vector<std::wstring> failedFiles;
-
-					if (!ImportCustomIconFiles(hWnd, &copiedCount, &convertedCount, &failedCount, &failedFiles))
-						return (INT_PTR) TRUE;
-
-					if (isInstalled)
-					{
-						RefreshInstalledShellMenu();
-					}
-
-					char msg[1024];
-					if (isInstalled)
-						sprintf_s(msg, sizeof(msg), "Imported %u file(s), converted %u image(s), failed %u file(s). The Custom menu was refreshed without restarting Explorer.", copiedCount, convertedCount, failedCount);
-					else
-						sprintf_s(msg, sizeof(msg), "Imported %u file(s), converted %u image(s), failed %u file(s). Install Folcolor to publish them in the context menu.", copiedCount, convertedCount, failedCount);
-
-					AppendFailedImportList(msg, sizeof(msg), failedFiles);
-					MessageBoxA(hWnd, msg, "Completion:", (MB_OK | (failedCount ? MB_ICONWARNING : MB_ICONASTERISK)));
 					return (INT_PTR) TRUE;
 				}
 				break;
