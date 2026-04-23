@@ -8,6 +8,7 @@ README.md.backup
 .vs/
 Win32/
 *.aps
+src/Controller/EmbeddedBadgeDll.generated.h
 
 # PyCharm
 .idea/

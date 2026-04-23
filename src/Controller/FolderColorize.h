@@ -3,9 +3,8 @@
 // MIT license https://opensource.org/licenses/MIT
 #pragma once
 
-// Amount of color icons we support
-// Windows limits the root context menu to 16 (we are 14 icons plus two featured entries)
-#define COLOR_ICON_COUNT 14
+// Amount of embedded color icons available in each Windows icon set.
+#define COLOR_ICON_COUNT 961
 
 // Offsets into our embedded icon resource
 #define WIN10_ICON_OFFSET 2								// Windows 10 set

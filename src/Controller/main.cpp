@@ -1,10 +1,10 @@
-
 // Folcolor(tm) (c) 2020 Kevin Weatherman
 // MIT license https://opensource.org/licenses/MIT
 #include "StdAfx.h"
 #include <versionhelpers.h>
 #include "resource.h"
 #include "FolderColorize.h"
+#include "GeneratedColorNames.h"
 
 #define APP_URL "http://www.folcolor.com/"
 
@@ -204,12 +204,6 @@ static const LPCWSTR kSystemDlls[] =
 	L"%SystemRoot%\\System32\\netshell.dll",
 	L"%SystemRoot%\\explorer.exe",
 	L"%SystemRoot%\\System32\\wmploc.dll",
-};
-
-static const LPCWSTR kColorNames[COLOR_ICON_COUNT] =
-{
-	L"Red", L"Pink", L"Purple", L"Blue", L"Cyan", L"Teal", L"Green",
-	L"Lime", L"Yellow", L"Orange", L"Brown", L"Grey", L"Blue Grey", L"Black"
 };
 
 static std::vector<PickerCategory> gPickerCategories;
@@ -559,14 +553,14 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 			CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER | LBS_OWNERDRAWFIXED,
 				274, 32, 380, 360, hWnd, (HMENU) IDC_PICKER_ITEM, NULL, NULL);
 
-			CreateWindowW(L"BUTTON", L"Apply", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-				274, 404, 80, 28, hWnd, (HMENU) IDC_PICKER_APPLY, NULL, NULL);
+			CreateWindowW(L"BUTTON", L"Apply Icon", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+				274, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_APPLY, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Import Icon", WS_CHILD | WS_VISIBLE,
-				360, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_IMPORT, NULL, NULL);
+				375, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_IMPORT, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Restore Default", WS_CHILD | WS_VISIBLE,
-				461, 404, 120, 28, hWnd, (HMENU) IDC_PICKER_RESTORE, NULL, NULL);
+				12, 404, 120, 28, hWnd, (HMENU) IDC_PICKER_RESTORE, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
-				587, 404, 70, 28, hWnd, (HMENU) IDC_PICKER_CANCEL, NULL, NULL);
+				476, 404, 70, 28, hWnd, (HMENU) IDC_PICKER_CANCEL, NULL, NULL);
 
 			PopulatePickerCategories(hWnd);
 		}
@@ -1038,7 +1032,6 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 						SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
 						UpdateInstallDependentControls(hWnd);
 						MessageBoxA(hWnd, "Installation complete.", "Completion:", (MB_OK | MB_ICONASTERISK));
-						EndDialog(hWnd, 0);
 					}
 					else
 					{
@@ -1057,8 +1050,6 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 							}
 							else
 								MessageBoxA(hWnd, PROJECT_NAME " uninstalled.", "Completion:", (MB_OK | MB_ICONASTERISK));
-
-							EndDialog(hWnd, 0);
 						}
 					}
 
@@ -1074,7 +1065,6 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 					SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
 					UpdateInstallDependentControls(hWnd);
 					MessageBoxA(hWnd, "Re-installation complete.", "Completion:", (MB_OK | MB_ICONASTERISK));
-					EndDialog(hWnd, 0);
 					return (INT_PTR) TRUE;
 				}
 				break;
@@ -1151,6 +1141,7 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 					return (INT_PTR) TRUE;
 				}
 				break;
+
 			};
 		}
 		break;

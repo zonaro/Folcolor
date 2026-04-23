@@ -64,7 +64,6 @@ CRITICAL("Path size limit error!");
 return std::wstring(exePath);
 }
 
-
 /**
  * Create a subkey and fail hard on registry errors.
  */
@@ -1050,7 +1049,6 @@ void RefreshInstalledShellMenu()
 
     ResetWindowsIconCache();
 }
-
 
 // Install ourself
 void Install()
