@@ -3,9 +3,16 @@
 #include "StdAfx.h"
 #include <versionhelpers.h>
 #include <cwctype>
+#include <algorithm>
+#include <cmath>
+#include <commctrl.h>
+#include <commdlg.h>
+#include <wincodec.h>
 #include "resource.h"
 #include "FolderColorize.h"
 #include "GeneratedColorNames.h"
+
+#pragma comment(lib, "Comdlg32.lib")
 
 #define APP_URL "http://www.folcolor.com/"
 
@@ -241,6 +248,7 @@ enum PickerColorCategoryIndex
 #define IDC_PICKER_OPEN_ICONS 2008
 #define IDC_PICKER_PREVIEW 2009
 #define IDC_PICKER_PREVIEW_LABEL 2010
+#define IDC_PICKER_CREATE_DERIVED 2011
 
 #define PICKER_SEARCH_DEBOUNCE_TIMER_ID 1
 #define PICKER_SEARCH_DEBOUNCE_MS 500
@@ -250,6 +258,58 @@ static HICON gPickerPreviewIcon      = NULL;
 static BOOL  gPickerPreviewOwnsIcon  = FALSE;
 static BOOL  gPickerPreviewIsFolder  = FALSE; // TRUE when showing the folder's current icon
 static BOOL  gPickerPreviewIsDefault = FALSE; // TRUE when showing the OS default folder icon (no custom icon set)
+
+// Derived icon editor controls.
+#define IDC_DERIVED_PREVIEW 3001
+#define IDC_DERIVED_LAYER_LIST 3002
+#define IDC_DERIVED_ADD_LAYER 3003
+#define IDC_DERIVED_REMOVE_LAYER 3004
+#define IDC_DERIVED_MOVE_UP 3005
+#define IDC_DERIVED_MOVE_DOWN 3006
+#define IDC_DERIVED_HUE 3007
+#define IDC_DERIVED_SATURATION 3008
+#define IDC_DERIVED_OPACITY 3009
+#define IDC_DERIVED_SCALE 3010
+#define IDC_DERIVED_POSX 3011
+#define IDC_DERIVED_POSY 3012
+#define IDC_DERIVED_SAVE 3013
+#define IDC_DERIVED_CANCEL 3014
+#define IDC_DERIVED_LABEL_HUE 3015
+#define IDC_DERIVED_LABEL_SATURATION 3016
+#define IDC_DERIVED_LABEL_OPACITY 3017
+#define IDC_DERIVED_LABEL_SCALE 3018
+#define IDC_DERIVED_LABEL_POSX 3019
+#define IDC_DERIVED_LABEL_POSY 3020
+
+/** A user-loaded overlay layer in the derived icon editor. */
+struct DerivedLayer
+{
+	std::wstring sourcePath;
+	std::wstring displayName;
+	std::vector<BYTE> pixels;
+	UINT width;
+	UINT height;
+	int hue;
+	int saturation;
+	int opacity;
+	int scale;
+	int posX;
+	int posY;
+};
+
+/** Runtime state for the derived icon editor window. */
+struct DerivedEditorState
+{
+	HWND hWnd;
+	HWND hParent;
+	PickerItem baseItem;
+	std::vector<BYTE> basePixels;
+	std::vector<BYTE> composedPixels;
+	std::vector<DerivedLayer> layers;
+	std::wstring savedPath;
+};
+
+static DerivedEditorState gDerivedEditor = {};
 
 /**
  * Return lowercase copy for case-insensitive matching.
@@ -364,6 +424,50 @@ static BOOL FuzzyMatchQuery(const std::wstring& lowerQuery, const std::wstring& 
 
 
 /**
+ * Return the best Levenshtein distance between query and target forms.
+ * Includes compact full-string compare and compact token compares.
+ */
+static int BestLevenshteinDistance(const std::wstring& lowerQuery, const std::wstring& lowerTarget)
+{
+	std::wstring compactQuery = RemoveWhitespaceCopy(lowerQuery);
+	std::wstring compactTarget = RemoveWhitespaceCopy(lowerTarget);
+	if (compactQuery.empty())
+		return 0;
+
+	if (compactTarget.find(compactQuery) != std::wstring::npos)
+		return 0;
+
+	int best = LevenshteinDistance(compactQuery, compactTarget);
+	size_t tLen = lowerTarget.size();
+	size_t start = 0;
+	while (start <= tLen)
+	{
+		size_t end = lowerTarget.find(L' ', start);
+		if (end == std::wstring::npos)
+			end = tLen;
+
+		size_t tokenLen = end - start;
+		if (tokenLen > 0)
+		{
+			std::wstring token = RemoveWhitespaceCopy(lowerTarget.substr(start, tokenLen));
+			if (!token.empty())
+			{
+				int tokenDist = LevenshteinDistance(compactQuery, token);
+				if (tokenDist < best)
+					best = tokenDist;
+			}
+		}
+
+		if (end == tLen)
+			break;
+		start = end + 1;
+	}
+
+	return best;
+}
+
+
+/**
  * Refresh current search query from the search box.
  */
 static void UpdatePickerSearchQuery(HWND hWnd)
@@ -412,6 +516,15 @@ static void RebuildPickerVisibleItems(int categoryIndex)
 		return;
 	}
 
+	struct SearchCandidate
+	{
+		PickerVisibleItem visible;
+		int distance;
+		std::wstring sortKey;
+	};
+
+	std::vector<SearchCandidate> candidates;
+
 	for (size_t c = 0; c < gPickerCategories.size(); c++)
 	{
 		const PickerCategory& cat = gPickerCategories[c];
@@ -427,13 +540,38 @@ static void RebuildPickerVisibleItems(int categoryIndex)
 				continue;
 			}
 
+			int labelDistance = BestLevenshteinDistance(gPickerSearchQuery, lowerLabel);
+			int categoryDistance = BestLevenshteinDistance(gPickerSearchQuery, lowerCategory);
+
 			PickerVisibleItem visible = {};
 			visible.categoryIndex = (int) c;
 			visible.itemIndex = (int) i;
 			visible.displayLabel = L"[" + cat.name + L"] " + item.label;
-			gPickerVisibleItems.push_back(visible);
+
+			SearchCandidate candidate = {};
+			candidate.visible = visible;
+			candidate.distance = min(labelDistance, categoryDistance);
+			candidate.sortKey = ToLowerCopy(visible.displayLabel);
+			candidates.push_back(candidate);
 		}
 	}
+
+	std::sort(candidates.begin(), candidates.end(), [](const SearchCandidate& left, const SearchCandidate& right)
+	{
+		if (left.distance != right.distance)
+			return (left.distance < right.distance);
+
+		if (left.sortKey != right.sortKey)
+			return (left.sortKey < right.sortKey);
+
+		if (left.visible.categoryIndex != right.visible.categoryIndex)
+			return (left.visible.categoryIndex < right.visible.categoryIndex);
+
+		return (left.visible.itemIndex < right.visible.itemIndex);
+	});
+
+	for (size_t i = 0; i < candidates.size(); i++)
+		gPickerVisibleItems.push_back(candidates[i].visible);
 }
 
 
@@ -917,6 +1055,1073 @@ static void ReleasePickerIcons()
 }
 
 
+/** Release COM pointers safely. */
+template<typename T>
+static void SafeReleaseCom(T*& ptr)
+{
+	if (ptr)
+	{
+		ptr->Release();
+		ptr = NULL;
+	}
+}
+
+
+#pragma pack(push, 1)
+struct DerivedIcoHeader
+{
+	WORD idReserved;
+	WORD idType;
+	WORD idCount;
+};
+
+struct DerivedIcoEntry
+{
+	BYTE bWidth;
+	BYTE bHeight;
+	BYTE bColorCount;
+	BYTE bReserved;
+	WORD wPlanes;
+	WORD wBitCount;
+	DWORD dwBytesInRes;
+	DWORD dwImageOffset;
+};
+#pragma pack(pop)
+
+
+/** Build and ensure the derived icons folder path exists. */
+static BOOL EnsureDerivedIconsFolder(std::wstring& outFolder)
+{
+	outFolder = std::wstring(myPathGlobal) + L"icons\\Derived Icons";
+	int shres = SHCreateDirectoryExW(NULL, outFolder.c_str(), NULL);
+	return (shres == ERROR_SUCCESS) || (shres == ERROR_ALREADY_EXISTS) || (shres == ERROR_FILE_EXISTS);
+}
+
+
+/** Build a destination path that does not collide with existing files. */
+static std::wstring MakeUniqueDestinationPathMain(const std::wstring& dirPath, const std::wstring& fileName)
+{
+	WCHAR baseName[MAX_PATH] = {};
+	WCHAR extension[MAX_PATH] = {};
+	_wsplitpath_s(fileName.c_str(), NULL, 0, NULL, 0, baseName, _countof(baseName), extension, _countof(extension));
+
+	std::wstring candidate = dirPath + L"\\" + fileName;
+	if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES)
+		return candidate;
+
+	for (UINT suffix = 1; suffix < 10000; suffix++)
+	{
+		WCHAR uniqueName[MAX_PATH] = {};
+		if (_snwprintf_s(uniqueName, _countof(uniqueName), (_countof(uniqueName) - 1), L"%s (%u)%s", baseName, suffix, extension) < 1)
+			continue;
+
+		candidate = dirPath + L"\\" + uniqueName;
+		if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES)
+			return candidate;
+	}
+
+	return std::wstring();
+}
+
+
+/** Convert any supported image file to 32bpp BGRA pixels. */
+static HRESULT LoadImageFileAsBgra(LPCWSTR sourcePath, std::vector<BYTE>& pixels, UINT& width, UINT& height)
+{
+	width = 0;
+	height = 0;
+	pixels.clear();
+
+	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	BOOL shouldUninitialize = SUCCEEDED(hr);
+	if ((hr != S_OK) && (hr != S_FALSE) && (hr != RPC_E_CHANGED_MODE))
+		return hr;
+
+	IWICImagingFactory* factory = NULL;
+	IWICBitmapDecoder* decoder = NULL;
+	IWICBitmapFrameDecode* frame = NULL;
+	IWICFormatConverter* converter = NULL;
+
+	do
+	{
+		hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+		if (FAILED(hr))
+			break;
+
+		hr = factory->CreateDecoderFromFilename(sourcePath, NULL, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder);
+		if (FAILED(hr))
+			break;
+
+		hr = decoder->GetFrame(0, &frame);
+		if (FAILED(hr))
+			break;
+
+		hr = frame->GetSize(&width, &height);
+		if (FAILED(hr) || (width == 0) || (height == 0))
+		{
+			if (SUCCEEDED(hr))
+				hr = E_FAIL;
+			break;
+		}
+
+		hr = factory->CreateFormatConverter(&converter);
+		if (FAILED(hr))
+			break;
+
+		hr = converter->Initialize(frame, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, NULL, 0.0, WICBitmapPaletteTypeCustom);
+		if (FAILED(hr))
+			break;
+
+		UINT stride = width * 4;
+		pixels.resize((size_t) stride * height);
+		hr = converter->CopyPixels(NULL, stride, (UINT) pixels.size(), pixels.data());
+	}
+	while (FALSE);
+
+	SafeReleaseCom(converter);
+	SafeReleaseCom(frame);
+	SafeReleaseCom(decoder);
+	SafeReleaseCom(factory);
+
+	if (shouldUninitialize)
+		CoUninitialize();
+
+	if (FAILED(hr))
+	{
+		width = 0;
+		height = 0;
+		pixels.clear();
+	}
+
+	return hr;
+}
+
+
+/** Render one extracted icon frame as a square BGRA bitmap. */
+static BOOL RenderIconToSquareBgra(HICON hIcon, UINT size, std::vector<BYTE>& pixels)
+{
+	pixels.assign((size_t) size * size * 4, 0);
+
+	BITMAPINFO bmi = {};
+	bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bmi.bmiHeader.biWidth = (LONG) size;
+	bmi.bmiHeader.biHeight = -(LONG) size;
+	bmi.bmiHeader.biPlanes = 1;
+	bmi.bmiHeader.biBitCount = 32;
+	bmi.bmiHeader.biCompression = BI_RGB;
+
+	void* dibBits = NULL;
+	HDC screenDc = GetDC(NULL);
+	if (!screenDc)
+		return FALSE;
+
+	HBITMAP dib = CreateDIBSection(screenDc, &bmi, DIB_RGB_COLORS, &dibBits, NULL, 0);
+	if (!dib)
+	{
+		ReleaseDC(NULL, screenDc);
+		return FALSE;
+	}
+
+	HDC memDc = CreateCompatibleDC(screenDc);
+	if (!memDc)
+	{
+		DeleteObject(dib);
+		ReleaseDC(NULL, screenDc);
+		return FALSE;
+	}
+
+	HGDIOBJ oldBitmap = SelectObject(memDc, dib);
+	PatBlt(memDc, 0, 0, size, size, BLACKNESS);
+	DrawIconEx(memDc, 0, 0, hIcon, size, size, 0, NULL, DI_NORMAL);
+	memcpy(pixels.data(), dibBits, pixels.size());
+
+	SelectObject(memDc, oldBitmap);
+	DeleteDC(memDc);
+	DeleteObject(dib);
+	ReleaseDC(NULL, screenDc);
+	return TRUE;
+}
+
+
+/** Load a picker item as a square 256x256 BGRA base image. */
+static BOOL LoadPickerItemAsBaseBgra(const PickerItem& item, std::vector<BYTE>& pixels)
+{
+	WCHAR resourcePath[MAX_PATH] = {};
+	int resourceIndex = 0;
+
+	if (item.isBuiltIn)
+	{
+		if (!GetModuleFileNameW(NULL, resourcePath, _countof(resourcePath)))
+			return FALSE;
+		resourceIndex = item.builtInOffset + item.builtInIndex;
+	}
+	else
+	{
+		wcsncpy_s(resourcePath, item.resourcePath.c_str(), _TRUNCATE);
+		resourceIndex = item.resourceIndex;
+	}
+
+	HICON hLarge = NULL;
+	UINT iconId = 0;
+	if (PrivateExtractIconsW(resourcePath, resourceIndex, 256, 256, &hLarge, &iconId, 1, 0) <= 0 || !hLarge)
+		return FALSE;
+
+	BOOL ok = RenderIconToSquareBgra(hLarge, 256, pixels);
+	DestroyIcon(hLarge);
+	return ok;
+}
+
+
+/** Resize a square BGRA image to another square size using nearest-neighbor. */
+static std::vector<BYTE> ResizeSquareNearest(const std::vector<BYTE>& src, UINT srcSize, UINT dstSize)
+{
+	std::vector<BYTE> dst((size_t) dstSize * dstSize * 4, 0);
+	for (UINT y = 0; y < dstSize; y++)
+	{
+		UINT sy = (UINT) (((UINT64) y * srcSize) / dstSize);
+		if (sy >= srcSize) sy = srcSize - 1;
+		for (UINT x = 0; x < dstSize; x++)
+		{
+			UINT sx = (UINT) (((UINT64) x * srcSize) / dstSize);
+			if (sx >= srcSize) sx = srcSize - 1;
+			const BYTE* s = &src[((size_t) sy * srcSize + sx) * 4];
+			BYTE* d = &dst[((size_t) y * dstSize + x) * 4];
+			d[0] = s[0];
+			d[1] = s[1];
+			d[2] = s[2];
+			d[3] = s[3];
+		}
+	}
+	return dst;
+}
+
+
+/** Rotate hue and scale saturation for one RGB pixel. */
+static void AdjustHueSaturation(BYTE& b, BYTE& g, BYTE& r, int hueDegrees, int saturationPercent)
+{
+	double rf = (double) r / 255.0;
+	double gf = (double) g / 255.0;
+	double bf = (double) b / 255.0;
+
+	double maxc = max(rf, max(gf, bf));
+	double minc = min(rf, min(gf, bf));
+	double delta = maxc - minc;
+
+	double h = 0.0;
+	if (delta > 0.000001)
+	{
+		if (maxc == rf)
+			h = 60.0 * fmod(((gf - bf) / delta), 6.0);
+		else if (maxc == gf)
+			h = 60.0 * (((bf - rf) / delta) + 2.0);
+		else
+			h = 60.0 * (((rf - gf) / delta) + 4.0);
+	}
+	if (h < 0.0)
+		h += 360.0;
+
+	double s = (maxc <= 0.0) ? 0.0 : (delta / maxc);
+	double v = maxc;
+
+	h += (double) hueDegrees;
+	while (h < 0.0) h += 360.0;
+	while (h >= 360.0) h -= 360.0;
+
+	s *= ((double) saturationPercent / 100.0);
+	if (s < 0.0) s = 0.0;
+	if (s > 1.0) s = 1.0;
+
+	double c = v * s;
+	double x = c * (1.0 - fabs(fmod(h / 60.0, 2.0) - 1.0));
+	double m = v - c;
+	double rr = 0.0, gg = 0.0, bb = 0.0;
+
+	if (h < 60.0) { rr = c; gg = x; bb = 0.0; }
+	else if (h < 120.0) { rr = x; gg = c; bb = 0.0; }
+	else if (h < 180.0) { rr = 0.0; gg = c; bb = x; }
+	else if (h < 240.0) { rr = 0.0; gg = x; bb = c; }
+	else if (h < 300.0) { rr = x; gg = 0.0; bb = c; }
+	else { rr = c; gg = 0.0; bb = x; }
+
+	r = (BYTE) min(255.0, max(0.0, (rr + m) * 255.0));
+	g = (BYTE) min(255.0, max(0.0, (gg + m) * 255.0));
+	b = (BYTE) min(255.0, max(0.0, (bb + m) * 255.0));
+}
+
+
+/** Alpha-composite one source pixel over one destination pixel. */
+static void BlendPixelOver(BYTE* dst, BYTE sb, BYTE sg, BYTE sr, BYTE sa)
+{
+	double srcA = (double) sa / 255.0;
+	double dstA = (double) dst[3] / 255.0;
+	double outA = srcA + (dstA * (1.0 - srcA));
+	if (outA <= 0.000001)
+	{
+		dst[0] = dst[1] = dst[2] = dst[3] = 0;
+		return;
+	}
+
+	double outB = (((double) sb * srcA) + ((double) dst[0] * dstA * (1.0 - srcA))) / outA;
+	double outG = (((double) sg * srcA) + ((double) dst[1] * dstA * (1.0 - srcA))) / outA;
+	double outR = (((double) sr * srcA) + ((double) dst[2] * dstA * (1.0 - srcA))) / outA;
+
+	dst[0] = (BYTE) min(255.0, max(0.0, outB));
+	dst[1] = (BYTE) min(255.0, max(0.0, outG));
+	dst[2] = (BYTE) min(255.0, max(0.0, outR));
+	dst[3] = (BYTE) min(255.0, max(0.0, outA * 255.0));
+}
+
+
+/** Rebuild composed preview pixels from base icon plus all overlay layers. */
+static void RebuildDerivedComposite()
+{
+	gDerivedEditor.composedPixels = gDerivedEditor.basePixels;
+	if (gDerivedEditor.composedPixels.size() != (size_t) 256 * 256 * 4)
+		gDerivedEditor.composedPixels.assign((size_t) 256 * 256 * 4, 0);
+
+	for (size_t layerIndex = 0; layerIndex < gDerivedEditor.layers.size(); layerIndex++)
+	{
+		const DerivedLayer& layer = gDerivedEditor.layers[layerIndex];
+		if (layer.pixels.empty() || (layer.width == 0) || (layer.height == 0))
+			continue;
+
+		double fit = min(256.0 / (double) layer.width, 256.0 / (double) layer.height);
+		double scale = fit * ((double) layer.scale / 100.0);
+		int drawW = max(1, (int) ((double) layer.width * scale + 0.5));
+		int drawH = max(1, (int) ((double) layer.height * scale + 0.5));
+		int startX = ((256 - drawW) / 2) + layer.posX;
+		int startY = ((256 - drawH) / 2) + layer.posY;
+
+		for (int y = 0; y < drawH; y++)
+		{
+			int dstY = startY + y;
+			if ((dstY < 0) || (dstY >= 256))
+				continue;
+
+			UINT srcY = (UINT) (((UINT64) y * layer.height) / (UINT) drawH);
+			if (srcY >= layer.height) srcY = layer.height - 1;
+
+			for (int x = 0; x < drawW; x++)
+			{
+				int dstX = startX + x;
+				if ((dstX < 0) || (dstX >= 256))
+					continue;
+
+				UINT srcX = (UINT) (((UINT64) x * layer.width) / (UINT) drawW);
+				if (srcX >= layer.width) srcX = layer.width - 1;
+
+				const BYTE* srcPx = &layer.pixels[((size_t) srcY * layer.width + srcX) * 4];
+				BYTE b = srcPx[0];
+				BYTE g = srcPx[1];
+				BYTE r = srcPx[2];
+				BYTE a = srcPx[3];
+
+				AdjustHueSaturation(b, g, r, layer.hue, layer.saturation);
+				a = (BYTE) (((UINT) a * (UINT) layer.opacity) / 100U);
+
+				BYTE* dstPx = &gDerivedEditor.composedPixels[((size_t) dstY * 256 + dstX) * 4];
+				BlendPixelOver(dstPx, b, g, r, a);
+			}
+		}
+	}
+}
+
+
+/** Encode one square BGRA bitmap to a PNG byte buffer through WIC. */
+static HRESULT EncodeSquarePngMain(const std::vector<BYTE>& pixels, UINT canvasSize, std::vector<BYTE>& pngData)
+{
+	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+	BOOL shouldUninitialize = SUCCEEDED(hr);
+	if ((hr != S_OK) && (hr != S_FALSE) && (hr != RPC_E_CHANGED_MODE))
+		return hr;
+
+	IWICImagingFactory* factory = NULL;
+	IWICBitmap* bitmap = NULL;
+	IWICBitmapEncoder* encoder = NULL;
+	IWICBitmapFrameEncode* frame = NULL;
+	IPropertyBag2* props = NULL;
+	IStream* stream = NULL;
+
+	do
+	{
+		hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+		if (FAILED(hr))
+			break;
+
+		UINT stride = canvasSize * 4;
+		hr = factory->CreateBitmapFromMemory(canvasSize, canvasSize, GUID_WICPixelFormat32bppBGRA, stride, (UINT) pixels.size(), const_cast<BYTE*>(pixels.data()), &bitmap);
+		if (FAILED(hr))
+			break;
+
+		hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
+		if (FAILED(hr))
+			break;
+
+		hr = factory->CreateEncoder(GUID_ContainerFormatPng, NULL, &encoder);
+		if (FAILED(hr))
+			break;
+
+		hr = encoder->Initialize(stream, WICBitmapEncoderNoCache);
+		if (FAILED(hr))
+			break;
+
+		hr = encoder->CreateNewFrame(&frame, &props);
+		if (FAILED(hr))
+			break;
+
+		hr = frame->Initialize(props);
+		if (FAILED(hr))
+			break;
+
+		hr = frame->SetSize(canvasSize, canvasSize);
+		if (FAILED(hr))
+			break;
+
+		WICPixelFormatGUID pixelFormat = GUID_WICPixelFormat32bppBGRA;
+		hr = frame->SetPixelFormat(&pixelFormat);
+		if (FAILED(hr))
+			break;
+
+		hr = frame->WriteSource(bitmap, NULL);
+		if (FAILED(hr))
+			break;
+
+		hr = frame->Commit();
+		if (FAILED(hr))
+			break;
+
+		hr = encoder->Commit();
+		if (FAILED(hr))
+			break;
+
+		STATSTG stat = {};
+		hr = stream->Stat(&stat, STATFLAG_NONAME);
+		if (FAILED(hr))
+			break;
+
+		pngData.resize((size_t) stat.cbSize.QuadPart);
+		LARGE_INTEGER zero = {};
+		hr = stream->Seek(zero, STREAM_SEEK_SET, NULL);
+		if (FAILED(hr))
+			break;
+
+		ULONG bytesRead = 0;
+		hr = stream->Read(pngData.data(), (ULONG) pngData.size(), &bytesRead);
+		if (FAILED(hr))
+			break;
+
+		if (bytesRead != pngData.size())
+		{
+			hr = E_FAIL;
+			break;
+		}
+	}
+	while (FALSE);
+
+	SafeReleaseCom(props);
+	SafeReleaseCom(frame);
+	SafeReleaseCom(encoder);
+	SafeReleaseCom(stream);
+	SafeReleaseCom(bitmap);
+	SafeReleaseCom(factory);
+
+	if (shouldUninitialize)
+		CoUninitialize();
+
+	return hr;
+}
+
+
+/** Write a multi-size PNG-backed ICO file. */
+static HRESULT WriteMultiSizePngIcoFile(LPCWSTR targetPath, const std::vector<BYTE>& src256)
+{
+	static const UINT kSizes[] = { 16, 24, 32, 48, 64, 128, 256 };
+	std::vector<std::vector<BYTE> > pngPayloads;
+	pngPayloads.reserve(_countof(kSizes));
+
+	for (UINT i = 0; i < _countof(kSizes); i++)
+	{
+		std::vector<BYTE> resized = (kSizes[i] == 256) ? src256 : ResizeSquareNearest(src256, 256, kSizes[i]);
+		std::vector<BYTE> pngData;
+		HRESULT hr = EncodeSquarePngMain(resized, kSizes[i], pngData);
+		if (FAILED(hr))
+			return hr;
+		pngPayloads.push_back(pngData);
+	}
+
+	DerivedIcoHeader header = { 0, 1, (WORD) _countof(kSizes) };
+	std::vector<DerivedIcoEntry> entries(_countof(kSizes));
+	DWORD dataOffset = (DWORD) (sizeof(DerivedIcoHeader) + (sizeof(DerivedIcoEntry) * _countof(kSizes)));
+
+	for (UINT i = 0; i < _countof(kSizes); i++)
+	{
+		DerivedIcoEntry entry = {};
+		entry.bWidth = (kSizes[i] >= 256) ? 0 : (BYTE) kSizes[i];
+		entry.bHeight = (kSizes[i] >= 256) ? 0 : (BYTE) kSizes[i];
+		entry.bColorCount = 0;
+		entry.bReserved = 0;
+		entry.wPlanes = 1;
+		entry.wBitCount = 32;
+		entry.dwBytesInRes = (DWORD) pngPayloads[i].size();
+		entry.dwImageOffset = dataOffset;
+		entries[i] = entry;
+		dataOffset += entry.dwBytesInRes;
+	}
+
+	HANDLE file = CreateFileW(targetPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (file == INVALID_HANDLE_VALUE)
+		return HRESULT_FROM_WIN32(GetLastError());
+
+	HRESULT hr = S_OK;
+	DWORD written = 0;
+	if (!WriteFile(file, &header, sizeof(header), &written, NULL) || (written != sizeof(header)))
+		hr = HRESULT_FROM_WIN32(GetLastError());
+
+	for (UINT i = 0; SUCCEEDED(hr) && (i < entries.size()); i++)
+	{
+		if (!WriteFile(file, &entries[i], sizeof(DerivedIcoEntry), &written, NULL) || (written != sizeof(DerivedIcoEntry)))
+			hr = HRESULT_FROM_WIN32(GetLastError());
+	}
+
+	for (UINT i = 0; SUCCEEDED(hr) && (i < pngPayloads.size()); i++)
+	{
+		if (!WriteFile(file, pngPayloads[i].data(), (DWORD) pngPayloads[i].size(), &written, NULL) || (written != pngPayloads[i].size()))
+			hr = HRESULT_FROM_WIN32(GetLastError());
+	}
+
+	CloseHandle(file);
+	if (FAILED(hr))
+		DeleteFileW(targetPath);
+
+	return hr;
+}
+
+
+/** Build one-line text for a layer list entry. */
+static std::wstring BuildLayerListLabel(const DerivedLayer& layer)
+{
+	WCHAR text[512] = {};
+	if (_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"%s  [H:%d S:%d%% O:%d%% Sc:%d%% X:%d Y:%d]",
+		layer.displayName.c_str(), layer.hue, layer.saturation, layer.opacity, layer.scale, layer.posX, layer.posY) < 1)
+		return layer.displayName;
+	return text;
+}
+
+
+/** Refresh layer listbox from the editor state. */
+static void RefreshDerivedLayerList(HWND hWnd)
+{
+	HWND hList = GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST);
+	if (!hList)
+		return;
+
+	int oldSel = (int) SendMessageW(hList, LB_GETCURSEL, 0, 0);
+	SendMessageW(hList, LB_RESETCONTENT, 0, 0);
+
+	for (size_t i = 0; i < gDerivedEditor.layers.size(); i++)
+		SendMessageW(hList, LB_ADDSTRING, 0, (LPARAM) BuildLayerListLabel(gDerivedEditor.layers[i]).c_str());
+
+	if (!gDerivedEditor.layers.empty())
+	{
+		if ((oldSel < 0) || (oldSel >= (int) gDerivedEditor.layers.size()))
+			oldSel = (int) gDerivedEditor.layers.size() - 1;
+		SendMessageW(hList, LB_SETCURSEL, (WPARAM) oldSel, 0);
+	}
+}
+
+
+/** Return currently selected layer index or -1 when no layer is selected. */
+static int GetSelectedDerivedLayerIndex(HWND hWnd)
+{
+	HWND hList = GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST);
+	if (!hList)
+		return -1;
+	int idx = (int) SendMessageW(hList, LB_GETCURSEL, 0, 0);
+	if ((idx < 0) || (idx >= (int) gDerivedEditor.layers.size()))
+		return -1;
+	return idx;
+}
+
+
+/** Update text labels attached to editor sliders. */
+static void UpdateDerivedSliderLabels(HWND hWnd, int layerIndex)
+{
+	if ((layerIndex < 0) || (layerIndex >= (int) gDerivedEditor.layers.size()))
+		return;
+
+	const DerivedLayer& layer = gDerivedEditor.layers[layerIndex];
+	WCHAR text[96] = {};
+
+	_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"Hue: %d", layer.hue);
+	SetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_LABEL_HUE), text);
+
+	_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"Saturation: %d%%", layer.saturation);
+	SetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_LABEL_SATURATION), text);
+
+	_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"Opacity: %d%%", layer.opacity);
+	SetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_LABEL_OPACITY), text);
+
+	_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"Scale: %d%%", layer.scale);
+	SetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_LABEL_SCALE), text);
+
+	_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"Position X: %d", layer.posX);
+	SetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_LABEL_POSX), text);
+
+	_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"Position Y: %d", layer.posY);
+	SetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_LABEL_POSY), text);
+}
+
+
+/** Push selected layer values into slider controls. */
+static void SyncDerivedControlsFromSelection(HWND hWnd)
+{
+	int idx = GetSelectedDerivedLayerIndex(hWnd);
+	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_REMOVE_LAYER), (idx >= 0));
+	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_MOVE_UP), (idx > 0));
+	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_MOVE_DOWN), (idx >= 0) && (idx < ((int) gDerivedEditor.layers.size() - 1)));
+
+	if (idx < 0)
+		return;
+
+	const DerivedLayer& layer = gDerivedEditor.layers[idx];
+	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_SETPOS, TRUE, layer.hue);
+	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_SETPOS, TRUE, layer.saturation);
+	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_SETPOS, TRUE, layer.opacity);
+	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETPOS, TRUE, layer.scale);
+	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_SETPOS, TRUE, layer.posX);
+	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_SETPOS, TRUE, layer.posY);
+	UpdateDerivedSliderLabels(hWnd, idx);
+}
+
+
+/** Read current slider values and write them back into selected layer. */
+static void ApplyDerivedControlsToSelection(HWND hWnd)
+{
+	int idx = GetSelectedDerivedLayerIndex(hWnd);
+	if (idx < 0)
+		return;
+
+	DerivedLayer& layer = gDerivedEditor.layers[idx];
+	layer.hue = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_GETPOS, 0, 0);
+	layer.saturation = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_GETPOS, 0, 0);
+	layer.opacity = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_GETPOS, 0, 0);
+	layer.scale = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_GETPOS, 0, 0);
+	layer.posX = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_GETPOS, 0, 0);
+	layer.posY = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_GETPOS, 0, 0);
+
+	UpdateDerivedSliderLabels(hWnd, idx);
+	RefreshDerivedLayerList(hWnd);
+	RebuildDerivedComposite();
+	InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
+}
+
+
+/** Ask user to choose one PNG/ICO layer file and append it to the editor. */
+static void AddDerivedLayerFromFile(HWND hWnd)
+{
+	WCHAR buffer[MAX_PATH] = {};
+	OPENFILENAMEW ofn = {};
+	static const WCHAR filter[] =
+		L"Layer files (*.png;*.ico)\0*.png;*.ico\0"
+		L"PNG files (*.png)\0*.png\0"
+		L"Icon files (*.ico)\0*.ico\0\0";
+
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = hWnd;
+	ofn.lpstrFilter = filter;
+	ofn.lpstrFile = buffer;
+	ofn.nMaxFile = _countof(buffer);
+	ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY;
+	ofn.lpstrTitle = L"Add Layer";
+
+	if (!GetOpenFileNameW(&ofn))
+		return;
+
+	std::vector<BYTE> pixels;
+	UINT width = 0;
+	UINT height = 0;
+	if (FAILED(LoadImageFileAsBgra(buffer, pixels, width, height)))
+	{
+		MessageBoxA(hWnd, "Unable to load layer file.", "Error:", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	DerivedLayer layer = {};
+	layer.sourcePath = buffer;
+	layer.displayName = PathFindFileNameW(buffer);
+	layer.pixels.swap(pixels);
+	layer.width = width;
+	layer.height = height;
+	layer.hue = 0;
+	layer.saturation = 100;
+	layer.opacity = 100;
+	layer.scale = 100;
+	layer.posX = 0;
+	layer.posY = 0;
+
+	gDerivedEditor.layers.push_back(layer);
+	RefreshDerivedLayerList(hWnd);
+	SyncDerivedControlsFromSelection(hWnd);
+	RebuildDerivedComposite();
+	InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
+}
+
+
+/** Save composed icon into icons\\Derived Icons with required name and unique suffix on conflict. */
+static BOOL SaveDerivedIconFromEditor(HWND hWnd)
+{
+	std::wstring derivedFolder;
+	if (!EnsureDerivedIconsFolder(derivedFolder))
+	{
+		MessageBoxA(hWnd, "Unable to create derived icons folder.", "Error:", MB_OK | MB_ICONERROR);
+		return FALSE;
+	}
+
+	WCHAR fileBuffer[MAX_PATH] = L"derived-icon.ico";
+	OPENFILENAMEW ofn = {};
+	static const WCHAR filter[] = L"Icon files (*.ico)\0*.ico\0\0";
+
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner = hWnd;
+	ofn.lpstrFilter = filter;
+	ofn.lpstrFile = fileBuffer;
+	ofn.nMaxFile = _countof(fileBuffer);
+	ofn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+	ofn.lpstrInitialDir = derivedFolder.c_str();
+	ofn.lpstrTitle = L"Save Derived Icon";
+
+	if (!GetSaveFileNameW(&ofn))
+		return FALSE;
+
+	std::wstring fileName = PathFindFileNameW(fileBuffer);
+	if (fileName.empty())
+	{
+		MessageBoxA(hWnd, "Icon name is required.", "Info:", MB_OK | MB_ICONINFORMATION);
+		return FALSE;
+	}
+
+	if (_wcsicmp(PathFindExtensionW(fileName.c_str()), L".ico") != 0)
+		fileName += L".ico";
+
+	std::wstring targetPath = MakeUniqueDestinationPathMain(derivedFolder, fileName);
+	if (targetPath.empty())
+	{
+		MessageBoxA(hWnd, "Unable to create unique target file name.", "Error:", MB_OK | MB_ICONERROR);
+		return FALSE;
+	}
+
+	RebuildDerivedComposite();
+	HRESULT hr = WriteMultiSizePngIcoFile(targetPath.c_str(), gDerivedEditor.composedPixels);
+	if (FAILED(hr))
+	{
+		MessageBoxA(hWnd, "Unable to save icon file.", "Error:", MB_OK | MB_ICONERROR);
+		return FALSE;
+	}
+
+	gDerivedEditor.savedPath = targetPath;
+	return TRUE;
+}
+
+
+/** Derived icon editor window procedure. */
+static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	switch (msg)
+	{
+		case WM_CREATE:
+		{
+			INITCOMMONCONTROLSEX icc = {};
+			icc.dwSize = sizeof(icc);
+			icc.dwICC = ICC_BAR_CLASSES;
+			InitCommonControlsEx(&icc);
+
+			CreateWindowW(L"STATIC", L"Composed Preview", WS_CHILD | WS_VISIBLE,
+				12, 12, 220, 20, hWnd, NULL, NULL, NULL);
+			CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW | WS_BORDER,
+				12, 36, 220, 220, hWnd, (HMENU) IDC_DERIVED_PREVIEW, NULL, NULL);
+
+			CreateWindowW(L"STATIC", L"Layers", WS_CHILD | WS_VISIBLE,
+				248, 12, 220, 20, hWnd, NULL, NULL, NULL);
+			CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL,
+				248, 36, 440, 220, hWnd, (HMENU) IDC_DERIVED_LAYER_LIST, NULL, NULL);
+
+			CreateWindowW(L"BUTTON", L"Add Layer", WS_CHILD | WS_VISIBLE,
+				700, 36, 120, 28, hWnd, (HMENU) IDC_DERIVED_ADD_LAYER, NULL, NULL);
+			CreateWindowW(L"BUTTON", L"Remove", WS_CHILD | WS_VISIBLE,
+				700, 70, 120, 28, hWnd, (HMENU) IDC_DERIVED_REMOVE_LAYER, NULL, NULL);
+			CreateWindowW(L"BUTTON", L"Move Up", WS_CHILD | WS_VISIBLE,
+				700, 104, 120, 28, hWnd, (HMENU) IDC_DERIVED_MOVE_UP, NULL, NULL);
+			CreateWindowW(L"BUTTON", L"Move Down", WS_CHILD | WS_VISIBLE,
+				700, 138, 120, 28, hWnd, (HMENU) IDC_DERIVED_MOVE_DOWN, NULL, NULL);
+
+			CreateWindowW(L"STATIC", L"Hue: 0", WS_CHILD | WS_VISIBLE,
+				248, 272, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_HUE, NULL, NULL);
+			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+				248, 292, 300, 34, hWnd, (HMENU) IDC_DERIVED_HUE, NULL, NULL);
+
+			CreateWindowW(L"STATIC", L"Saturation: 100%", WS_CHILD | WS_VISIBLE,
+				248, 328, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_SATURATION, NULL, NULL);
+			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+				248, 348, 300, 34, hWnd, (HMENU) IDC_DERIVED_SATURATION, NULL, NULL);
+
+			CreateWindowW(L"STATIC", L"Opacity: 100%", WS_CHILD | WS_VISIBLE,
+				248, 384, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_OPACITY, NULL, NULL);
+			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+				248, 404, 300, 34, hWnd, (HMENU) IDC_DERIVED_OPACITY, NULL, NULL);
+
+			CreateWindowW(L"STATIC", L"Scale: 100%", WS_CHILD | WS_VISIBLE,
+				560, 272, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_SCALE, NULL, NULL);
+			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+				560, 292, 260, 34, hWnd, (HMENU) IDC_DERIVED_SCALE, NULL, NULL);
+
+			CreateWindowW(L"STATIC", L"Position X: 0", WS_CHILD | WS_VISIBLE,
+				560, 328, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_POSX, NULL, NULL);
+			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+				560, 348, 260, 34, hWnd, (HMENU) IDC_DERIVED_POSX, NULL, NULL);
+
+			CreateWindowW(L"STATIC", L"Position Y: 0", WS_CHILD | WS_VISIBLE,
+				560, 384, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_POSY, NULL, NULL);
+			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+				560, 404, 260, 34, hWnd, (HMENU) IDC_DERIVED_POSY, NULL, NULL);
+
+			CreateWindowW(L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+				640, 454, 90, 30, hWnd, (HMENU) IDC_DERIVED_SAVE, NULL, NULL);
+			CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
+				736, 454, 90, 30, hWnd, (HMENU) IDC_DERIVED_CANCEL, NULL, NULL);
+
+			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_SETRANGE, TRUE, MAKELONG(-180, 180));
+			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_SETRANGE, TRUE, MAKELONG(0, 200));
+			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_SETRANGE, TRUE, MAKELONG(0, 100));
+			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETRANGE, TRUE, MAKELONG(10, 300));
+			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_SETRANGE, TRUE, MAKELONG(-128, 128));
+			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_SETRANGE, TRUE, MAKELONG(-128, 128));
+
+			RefreshDerivedLayerList(hWnd);
+			SyncDerivedControlsFromSelection(hWnd);
+			RebuildDerivedComposite();
+		}
+		return 0;
+
+		case WM_DRAWITEM:
+		{
+			LPDRAWITEMSTRUCT di = (LPDRAWITEMSTRUCT) lParam;
+			if (!di || (di->CtlID != IDC_DERIVED_PREVIEW))
+				break;
+
+			FillRect(di->hDC, &di->rcItem, GetSysColorBrush(COLOR_WINDOW));
+			if (gDerivedEditor.composedPixels.size() == ((size_t) 256 * 256 * 4))
+			{
+				BITMAPINFO bmi = {};
+				bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+				bmi.bmiHeader.biWidth = 256;
+				bmi.bmiHeader.biHeight = -256;
+				bmi.bmiHeader.biPlanes = 1;
+				bmi.bmiHeader.biBitCount = 32;
+				bmi.bmiHeader.biCompression = BI_RGB;
+
+				int boxW = di->rcItem.right - di->rcItem.left;
+				int boxH = di->rcItem.bottom - di->rcItem.top;
+				int draw = min(boxW, boxH) - 8;
+				if (draw < 1) draw = 1;
+				int dx = di->rcItem.left + (boxW - draw) / 2;
+				int dy = di->rcItem.top + (boxH - draw) / 2;
+
+				StretchDIBits(di->hDC,
+					dx,
+					dy,
+					draw,
+					draw,
+					0,
+					0,
+					256,
+					256,
+					gDerivedEditor.composedPixels.data(),
+					&bmi,
+					DIB_RGB_COLORS,
+					SRCCOPY);
+			}
+			return TRUE;
+		}
+
+		case WM_HSCROLL:
+			ApplyDerivedControlsToSelection(hWnd);
+			return 0;
+
+		case WM_COMMAND:
+			switch (LOWORD(wParam))
+			{
+				case IDC_DERIVED_LAYER_LIST:
+				if (HIWORD(wParam) == LBN_SELCHANGE)
+					SyncDerivedControlsFromSelection(hWnd);
+				break;
+
+				case IDC_DERIVED_ADD_LAYER:
+					AddDerivedLayerFromFile(hWnd);
+					break;
+
+				case IDC_DERIVED_REMOVE_LAYER:
+				{
+					int idx = GetSelectedDerivedLayerIndex(hWnd);
+					if (idx >= 0)
+					{
+						gDerivedEditor.layers.erase(gDerivedEditor.layers.begin() + idx);
+						RefreshDerivedLayerList(hWnd);
+						SyncDerivedControlsFromSelection(hWnd);
+						RebuildDerivedComposite();
+						InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
+					}
+				}
+				break;
+
+				case IDC_DERIVED_MOVE_UP:
+				{
+					int idx = GetSelectedDerivedLayerIndex(hWnd);
+					if (idx > 0)
+					{
+						std::swap(gDerivedEditor.layers[idx], gDerivedEditor.layers[idx - 1]);
+						RefreshDerivedLayerList(hWnd);
+						SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST), LB_SETCURSEL, idx - 1, 0);
+						SyncDerivedControlsFromSelection(hWnd);
+						RebuildDerivedComposite();
+						InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
+					}
+				}
+				break;
+
+				case IDC_DERIVED_MOVE_DOWN:
+				{
+					int idx = GetSelectedDerivedLayerIndex(hWnd);
+					if ((idx >= 0) && (idx < ((int) gDerivedEditor.layers.size() - 1)))
+					{
+						std::swap(gDerivedEditor.layers[idx], gDerivedEditor.layers[idx + 1]);
+						RefreshDerivedLayerList(hWnd);
+						SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST), LB_SETCURSEL, idx + 1, 0);
+						SyncDerivedControlsFromSelection(hWnd);
+						RebuildDerivedComposite();
+						InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
+					}
+				}
+				break;
+
+				case IDC_DERIVED_SAVE:
+					if (SaveDerivedIconFromEditor(hWnd))
+						DestroyWindow(hWnd);
+					break;
+
+				case IDC_DERIVED_CANCEL:
+					DestroyWindow(hWnd);
+					break;
+			}
+			return 0;
+
+		case WM_CLOSE:
+			DestroyWindow(hWnd);
+			return 0;
+
+		case WM_DESTROY:
+			return 0;
+	}
+
+	return DefWindowProcW(hWnd, msg, wParam, lParam);
+}
+
+
+/** Open the derived icon editor as a modal child and return saved file path when successful. */
+static BOOL ShowDerivedIconEditor(HWND hParent, const PickerItem& baseItem, std::wstring& savedPath)
+{
+	savedPath.clear();
+	gDerivedEditor = {};
+	gDerivedEditor.hParent = hParent;
+	gDerivedEditor.baseItem = baseItem;
+
+	if (!LoadPickerItemAsBaseBgra(baseItem, gDerivedEditor.basePixels))
+	{
+		MessageBoxA(hParent, "Unable to load the selected base icon.", "Error:", MB_OK | MB_ICONERROR);
+		return FALSE;
+	}
+
+	RebuildDerivedComposite();
+
+	WNDCLASSW wc = {};
+	wc.lpfnWndProc = DerivedIconEditorWndProc;
+	wc.hInstance = GetModuleHandleW(NULL);
+	wc.lpszClassName = L"FolcolorDerivedIconEditor";
+	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wc.hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+	RegisterClassW(&wc);
+
+	HWND hWnd = CreateWindowExW(
+		WS_EX_DLGMODALFRAME,
+		wc.lpszClassName,
+		L"Create Derived Icon",
+		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+		CW_USEDEFAULT, CW_USEDEFAULT, 850, 540,
+		hParent, NULL, wc.hInstance, NULL);
+
+	if (!hWnd)
+		return FALSE;
+
+	gDerivedEditor.hWnd = hWnd;
+	EnableWindow(hParent, FALSE);
+	ShowWindow(hWnd, SW_SHOW);
+	UpdateWindow(hWnd);
+
+	MSG msg = {};
+	while (IsWindow(hWnd) && (GetMessage(&msg, NULL, 0, 0) > 0))
+	{
+		if (!IsDialogMessage(hWnd, &msg))
+		{
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+	}
+
+	EnableWindow(hParent, TRUE);
+	SetActiveWindow(hParent);
+	savedPath = gDerivedEditor.savedPath;
+
+	gDerivedEditor.layers.clear();
+	gDerivedEditor.basePixels.clear();
+	gDerivedEditor.composedPixels.clear();
+	return !savedPath.empty();
+}
+
+
+/** Locate one picker item by resource path and select it when available. */
+static void SelectPickerItemByResourcePath(HWND hWnd, const std::wstring& path)
+{
+	if (path.empty())
+		return;
+
+	for (size_t c = 0; c < gPickerCategories.size(); c++)
+	{
+		for (size_t i = 0; i < gPickerCategories[c].items.size(); i++)
+		{
+			const PickerItem& item = gPickerCategories[c].items[i];
+			if (!item.isBuiltIn && (_wcsicmp(item.resourcePath.c_str(), path.c_str()) == 0))
+			{
+				HWND hCat = GetDlgItem(hWnd, IDC_PICKER_CATEGORY);
+				SendMessageW(hCat, LB_SETCURSEL, (WPARAM) c, 0);
+				PopulatePickerItems(hWnd, (int) c);
+
+				HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
+				for (int row = 0; row < (int) gPickerVisibleItems.size(); row++)
+				{
+					if ((gPickerVisibleItems[row].categoryIndex == (int) c) && (gPickerVisibleItems[row].itemIndex == (int) i))
+					{
+						SendMessageW(hItem, LB_SETCURSEL, row, 0);
+						LoadPickerPreviewIcon(gPickerCategories[c].items[i]);
+						InvalidateRect(GetDlgItem(hWnd, IDC_PICKER_PREVIEW), NULL, TRUE);
+						UpdatePickerPreviewLabel(hWnd);
+						return;
+					}
+				}
+			}
+		}
+	}
+}
+
+
 /**
  * Picker window procedure.
  */
@@ -950,6 +2155,8 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 				274, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_APPLY, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Import Icon", WS_CHILD | WS_VISIBLE,
 				375, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_IMPORT, NULL, NULL);
+			CreateWindowW(L"BUTTON", L"Create Derived Icon", WS_CHILD | WS_VISIBLE,
+				552, 404, 144, 28, hWnd, (HMENU) IDC_PICKER_CREATE_DERIVED, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Open Icons Folder", WS_CHILD | WS_VISIBLE,
 				138, 404, 130, 28, hWnd, (HMENU) IDC_PICKER_OPEN_ICONS, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Restore Default", WS_CHILD | WS_VISIBLE,
@@ -1173,6 +2380,42 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 						copiedCount, convertedCount, failedCount);
 					AppendFailedImportList(msg, sizeof(msg), failedFiles);
 					MessageBoxA(hWnd, msg, "Completion:", (MB_OK | (failedCount ? MB_ICONWARNING : MB_ICONASTERISK)));
+				}
+				break;
+
+				case IDC_PICKER_CREATE_DERIVED:
+				{
+					HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
+					int itemSel = (int) SendMessageW(hItem, LB_GETCURSEL, 0, 0);
+					if (itemSel == LB_ERR)
+					{
+						MessageBoxA(hWnd, "Select an icon first.", "Info:", MB_OK | MB_ICONINFORMATION);
+						break;
+					}
+
+					int visibleIndex = (int) SendMessageW(hItem, LB_GETITEMDATA, (WPARAM) itemSel, 0);
+					if ((visibleIndex < 0) || (visibleIndex >= (int) gPickerVisibleItems.size()))
+						break;
+
+					const PickerVisibleItem& visibleItem = gPickerVisibleItems[visibleIndex];
+					if ((visibleItem.categoryIndex < 0) || (visibleItem.categoryIndex >= (int) gPickerCategories.size()))
+						break;
+
+					if ((visibleItem.itemIndex < 0) || (visibleItem.itemIndex >= (int) gPickerCategories[visibleItem.categoryIndex].items.size()))
+						break;
+
+					std::wstring savedPath;
+					const PickerItem& selectedItem = gPickerCategories[visibleItem.categoryIndex].items[visibleItem.itemIndex];
+					if (ShowDerivedIconEditor(hWnd, selectedItem, savedPath))
+					{
+						if (isInstalled)
+							RefreshInstalledShellMenu();
+
+						ReleasePickerIcons();
+						BuildPickerCategories(gPickerCategories);
+						PopulatePickerCategories(hWnd);
+						SelectPickerItemByResourcePath(hWnd, savedPath);
+					}
 				}
 				break;
 
