@@ -174,6 +174,7 @@ struct PickerItem
 {
 	BOOL isBuiltIn;
 	int builtInIndex;
+	int builtInOffset;
 	std::wstring resourcePath;
 	int resourceIndex;
 	std::wstring label;
@@ -192,17 +193,23 @@ struct PickerCategory
 };
 
 
-static const LPCWSTR kSystemDlls[] =
+struct SystemCategoryEntry
 {
-	L"%SystemRoot%\\System32\\imageres.dll",
-	L"%SystemRoot%\\System32\\shell32.dll",
-	L"%SystemRoot%\\System32\\pifmgr.dll",
-	L"%SystemRoot%\\System32\\ddores.dll",
-	L"%SystemRoot%\\System32\\accessibilitycpl.dll",
-	L"%SystemRoot%\\System32\\mmres.dll",
-	L"%SystemRoot%\\System32\\netshell.dll",
-	L"%SystemRoot%\\explorer.exe",
-	L"%SystemRoot%\\System32\\wmploc.dll",
+	LPCWSTR envPath;
+	LPCWSTR label;
+};
+
+static const SystemCategoryEntry kSystemDlls[] =
+{
+	{ L"%SystemRoot%\\System32\\imageres.dll", L"Windows Icon Library (imageres.dll)" },
+	{ L"%SystemRoot%\\System32\\shell32.dll", L"Windows Shell Core (shell32.dll)" },
+	{ L"%SystemRoot%\\System32\\pifmgr.dll", L"Legacy Program Icons (pifmgr.dll)" },
+	{ L"%SystemRoot%\\System32\\ddores.dll", L"Device Category Resources (ddores.dll)" },
+	{ L"%SystemRoot%\\System32\\accessibilitycpl.dll", L"Ease of Access (accessibilitycpl.dll)" },
+	{ L"%SystemRoot%\\System32\\mmres.dll", L"Audio Resources (mmres.dll)" },
+	{ L"%SystemRoot%\\System32\\netshell.dll", L"Network Connections (netshell.dll)" },
+	{ L"%SystemRoot%\\explorer.exe", L"File Explorer Shell (explorer.exe)" },
+	{ L"%SystemRoot%\\System32\\wmploc.dll", L"Media Player Resources (wmploc.dll)" },
 };
 
 static std::vector<PickerCategory> gPickerCategories;
@@ -217,6 +224,13 @@ static std::vector<PickerVisibleItem> gPickerVisibleItems;
 static std::wstring gPickerSearchQuery;
 static std::wstring gPickerTargetFolder;
 
+enum PickerColorCategoryIndex
+{
+	PICKER_COLORS_WIN11 = 0,
+	PICKER_COLORS_WIN10 = 1,
+	PICKER_COLORS_WIN78 = 2,
+};
+
 #define IDC_PICKER_CATEGORY 2001
 #define IDC_PICKER_ITEM 2002
 #define IDC_PICKER_APPLY 2003
@@ -225,6 +239,14 @@ static std::wstring gPickerTargetFolder;
 #define IDC_PICKER_IMPORT 2006
 #define IDC_PICKER_SEARCH 2007
 #define IDC_PICKER_OPEN_ICONS 2008
+#define IDC_PICKER_PREVIEW 2009
+
+#define PICKER_SEARCH_DEBOUNCE_TIMER_ID 1
+#define PICKER_SEARCH_DEBOUNCE_MS 500
+
+/** Large icon displayed in the preview box (96x96). */
+static HICON gPickerPreviewIcon = NULL;
+static BOOL  gPickerPreviewOwnsIcon = FALSE;
 
 /**
  * Return lowercase copy for case-insensitive matching.
@@ -235,6 +257,106 @@ static std::wstring ToLowerCopy(const std::wstring& value)
 	for (size_t i = 0; i < out.size(); i++)
 		out[i] = (WCHAR) towlower(out[i]);
 	return out;
+}
+
+
+/**
+ * Return a copy without whitespace characters.
+ */
+static std::wstring RemoveWhitespaceCopy(const std::wstring& value)
+{
+	std::wstring out;
+	out.reserve(value.size());
+	for (size_t i = 0; i < value.size(); i++)
+	{
+		if (!iswspace(value[i]))
+			out.push_back(value[i]);
+	}
+	return out;
+}
+
+
+/**
+ * Compute Levenshtein edit distance between two lowercase wide strings.
+ * Uses the standard iterative two-row DP approach.
+ */
+static int LevenshteinDistance(const std::wstring& a, const std::wstring& b)
+{
+	size_t m = a.size();
+	size_t n = b.size();
+	if (m == 0) return (int) n;
+	if (n == 0) return (int) m;
+
+	std::vector<int> prev(n + 1, 0);
+	std::vector<int> curr(n + 1, 0);
+	for (size_t j = 0; j <= n; j++)
+		prev[j] = (int) j;
+
+	for (size_t i = 1; i <= m; i++)
+	{
+		curr[0] = (int) i;
+		for (size_t j = 1; j <= n; j++)
+		{
+			int cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
+			curr[j] = min(min(prev[j] + 1, curr[j - 1] + 1), prev[j - 1] + cost);
+		}
+		std::swap(prev, curr);
+	}
+	return prev[n];
+}
+
+
+/**
+ * Return TRUE if lowerQuery fuzzy-matches the lowerTarget string.
+ * First tries a fast substring check; then tokenises on spaces and checks
+ * each token with Levenshtein distance <= maxDist.
+ */
+static BOOL FuzzyMatchQuery(const std::wstring& lowerQuery, const std::wstring& lowerTarget, int maxDist)
+{
+	std::wstring compactQuery = RemoveWhitespaceCopy(lowerQuery);
+	std::wstring compactTarget = RemoveWhitespaceCopy(lowerTarget);
+
+	if (compactQuery.empty())
+		return TRUE;
+
+	if (compactTarget.find(compactQuery) != std::wstring::npos)
+		return TRUE;
+
+	size_t qLen = compactQuery.size();
+	size_t tLen = compactTarget.size();
+	if ((int) qLen <= (int) tLen + maxDist &&
+		(int) tLen <= (int) qLen + maxDist)
+	{
+		if (LevenshteinDistance(compactQuery, compactTarget) <= maxDist)
+			return TRUE;
+	}
+
+	tLen = lowerTarget.size();
+	size_t start = 0;
+	while (start <= tLen)
+	{
+		size_t end = lowerTarget.find(L' ', start);
+		if (end == std::wstring::npos)
+			end = tLen;
+
+		size_t tokenLen = end - start;
+		if (tokenLen > 0)
+		{
+			std::wstring token = RemoveWhitespaceCopy(lowerTarget.substr(start, tokenLen));
+			tokenLen = token.size();
+			if ((int) qLen <= (int) tokenLen + maxDist &&
+				(int) tokenLen <= (int) qLen + maxDist)
+			{
+				if (LevenshteinDistance(compactQuery, token) <= maxDist)
+					return TRUE;
+			}
+		}
+
+		if (end == tLen)
+			break;
+		start = end + 1;
+	}
+	return FALSE;
 }
 
 
@@ -296,8 +418,8 @@ static void RebuildPickerVisibleItems(int categoryIndex)
 		{
 			const PickerItem& item = cat.items[i];
 			std::wstring lowerLabel = ToLowerCopy(item.label);
-			if ((lowerLabel.find(gPickerSearchQuery) == std::wstring::npos) &&
-				(lowerCategory.find(gPickerSearchQuery) == std::wstring::npos))
+			if (!FuzzyMatchQuery(gPickerSearchQuery, lowerLabel, 3) &&
+				!FuzzyMatchQuery(gPickerSearchQuery, lowerCategory, 3))
 			{
 				continue;
 			}
@@ -338,17 +460,33 @@ static std::wstring GetCurrentExePath()
 
 
 /**
- * Add built-in color icons as a category.
+ * Return default Colors category index for the current OS.
  */
-static void AddColorsCategory(std::vector<PickerCategory>& out)
+static int GetDefaultColorCategoryIndex()
+{
+	if (iconOffsetGlobal == WIN11_ICON_OFFSET)
+		return PICKER_COLORS_WIN11;
+
+	if (iconOffsetGlobal == WIN10_ICON_OFFSET)
+		return PICKER_COLORS_WIN10;
+
+	return PICKER_COLORS_WIN78;
+}
+
+
+/**
+ * Add one built-in color category for a specific resource set.
+ */
+static void AddColorsCategory(std::vector<PickerCategory>& out, const WCHAR* categoryName, int builtInOffset)
 {
 	PickerCategory cat;
-	cat.name = L"Colors";
+	cat.name = categoryName;
 	for (int i = 0; i < COLOR_ICON_COUNT; i++)
 	{
 		PickerItem item = {};
 		item.isBuiltIn = TRUE;
 		item.builtInIndex = i;
+		item.builtInOffset = builtInOffset;
 		item.resourceIndex = 0;
 		item.label = kColorNames[i];
 		item.cachedIcon = NULL;
@@ -384,6 +522,7 @@ static void AddDllCategory(std::vector<PickerCategory>& out, const std::wstring&
 		PickerItem item = {};
 		item.isBuiltIn = FALSE;
 		item.builtInIndex = -1;
+		item.builtInOffset = 0;
 		item.resourcePath = filePath;
 		item.resourceIndex = (int) i;
 		item.label = label;
@@ -427,6 +566,7 @@ static void AddIcoFolderCategory(std::vector<PickerCategory>& out, const std::ws
 		PickerItem item = {};
 		item.isBuiltIn = FALSE;
 		item.builtInIndex = -1;
+		item.builtInOffset = 0;
 		item.resourcePath = icoFiles[i];
 		item.resourceIndex = 0;
 		item.label = PathFindFileNameW(icoFiles[i].c_str());
@@ -494,17 +634,15 @@ static void CollectCustomCategories(std::vector<PickerCategory>& out, const std:
 static void BuildPickerCategories(std::vector<PickerCategory>& out)
 {
 	out.clear();
-	AddColorsCategory(out);
+	AddColorsCategory(out, L"Windows 11 Colored", WIN11_ICON_OFFSET);
+	AddColorsCategory(out, L"Windows 10 Colored", WIN10_ICON_OFFSET);
+	AddColorsCategory(out, L"Windows 7/8 Colored", WIN7_ICON_OFFSET);
 
 	for (UINT i = 0; i < _countof(kSystemDlls); i++)
 	{
-		std::wstring path = ExpandEnvPath(kSystemDlls[i]);
+		std::wstring path = ExpandEnvPath(kSystemDlls[i].envPath);
 		if (!path.empty())
-		{
-			std::wstring label = L"System DLL: ";
-			label += PathFindFileNameW(path.c_str());
-			AddDllCategory(out, label, path);
-		}
+			AddDllCategory(out, kSystemDlls[i].label, path);
 	}
 
 	std::wstring iconsRoot = std::wstring(myPathGlobal) + L"icons";
@@ -536,6 +674,18 @@ static void PopulatePickerItems(HWND hWnd, int categoryIndex)
 
 
 /**
+ * Apply current search text to item list immediately.
+ */
+static void ApplyPickerSearchNow(HWND hWnd)
+{
+	UpdatePickerSearchQuery(hWnd);
+	HWND hCat = GetDlgItem(hWnd, IDC_PICKER_CATEGORY);
+	int sel = (int) SendMessageW(hCat, LB_GETCURSEL, 0, 0);
+	PopulatePickerItems(hWnd, sel);
+}
+
+
+/**
  * Populate the left-side categories list.
  */
 static void PopulatePickerCategories(HWND hWnd)
@@ -548,9 +698,13 @@ static void PopulatePickerCategories(HWND hWnd)
 
 	if (!gPickerCategories.empty())
 	{
-		SendMessageW(hCat, LB_SETCURSEL, 0, 0);
+		int defaultCategory = GetDefaultColorCategoryIndex();
+		if ((defaultCategory < 0) || (defaultCategory >= (int) gPickerCategories.size()))
+			defaultCategory = 0;
+
+		SendMessageW(hCat, LB_SETCURSEL, defaultCategory, 0);
 		UpdatePickerSearchQuery(hWnd);
-		PopulatePickerItems(hWnd, 0);
+		PopulatePickerItems(hWnd, defaultCategory);
 	}
 	else
 	{
@@ -577,7 +731,7 @@ static HICON ResolvePickerItemIcon(PickerItem& item)
 
 		HICON largeIcon = NULL;
 		HICON smallIcon = NULL;
-		if (ExtractIconExW(exePath, iconOffsetGlobal + item.builtInIndex, &largeIcon, &smallIcon, 1) > 0)
+		if (ExtractIconExW(exePath, item.builtInOffset + item.builtInIndex, &largeIcon, &smallIcon, 1) > 0)
 		{
 			if (largeIcon)
 				DestroyIcon(largeIcon);
@@ -608,6 +762,52 @@ static HICON ResolvePickerItemIcon(PickerItem& item)
 	return item.cachedIcon;
 }
 
+
+/**
+ * Release the current preview icon, if owned.
+ */
+static void ReleasePickerPreviewIcon()
+{
+	if (gPickerPreviewOwnsIcon && gPickerPreviewIcon)
+		DestroyIcon(gPickerPreviewIcon);
+	gPickerPreviewIcon = NULL;
+	gPickerPreviewOwnsIcon = FALSE;
+}
+
+/**
+ * Load the largest available icon frame (up to 256x256) for the given PickerItem
+ * directly from the source resource, without upscaling the small listbox icon.
+ * Uses PrivateExtractIconsW so the same file-offset index convention as
+ * ExtractIconExW applies for both built-in (EXE) and external (DLL/ICO) sources.
+ */
+static void LoadPickerPreviewIcon(PickerItem& item)
+{
+	ReleasePickerPreviewIcon();
+
+	WCHAR resourcePath[MAX_PATH] = {};
+	int   resourceIndex = 0;
+
+	if (item.isBuiltIn)
+	{
+		if (!GetModuleFileNameW(NULL, resourcePath, _countof(resourcePath)))
+			return;
+		resourceIndex = item.builtInOffset + item.builtInIndex;
+	}
+	else
+	{
+		wcsncpy_s(resourcePath, item.resourcePath.c_str(), _TRUNCATE);
+		resourceIndex = item.resourceIndex;
+	}
+
+	HICON hLarge = NULL;
+	UINT  iconId  = 0;
+	// Request 256x256; Windows picks the best available frame from the icon data.
+	if (PrivateExtractIconsW(resourcePath, resourceIndex, 256, 256, &hLarge, &iconId, 1, 0) > 0 && hLarge)
+	{
+		gPickerPreviewIcon     = hLarge;
+		gPickerPreviewOwnsIcon = TRUE;
+	}
+}
 
 /**
  * Release cached picker icons.
@@ -645,11 +845,17 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 			CreateWindowW(L"STATIC", L"Icons", WS_CHILD | WS_VISIBLE,
 				274, 12, 80, 18, hWnd, NULL, NULL, NULL);
 			CreateWindowW(L"STATIC", L"Search", WS_CHILD | WS_VISIBLE,
-				426, 12, 48, 18, hWnd, NULL, NULL, NULL);
+				356, 12, 48, 18, hWnd, NULL, NULL, NULL);
 			CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP,
-				478, 10, 176, 22, hWnd, (HMENU) IDC_PICKER_SEARCH, NULL, NULL);
+				408, 10, 132, 22, hWnd, (HMENU) IDC_PICKER_SEARCH, NULL, NULL);
 			CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER | LBS_OWNERDRAWFIXED,
-				274, 32, 380, 360, hWnd, (HMENU) IDC_PICKER_ITEM, NULL, NULL);
+				274, 32, 260, 360, hWnd, (HMENU) IDC_PICKER_ITEM, NULL, NULL);
+
+			// --- Preview panel (right of icon list) ---
+			CreateWindowW(L"STATIC", L"Preview", WS_CHILD | WS_VISIBLE,
+				546, 12, 150, 18, hWnd, NULL, NULL, NULL);
+			CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW | WS_BORDER,
+				546, 32, 150, 150, hWnd, (HMENU) IDC_PICKER_PREVIEW, NULL, NULL);
 
 			CreateWindowW(L"BUTTON", L"Apply Icon", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
 				274, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_APPLY, NULL, NULL);
@@ -680,7 +886,26 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 		case WM_DRAWITEM:
 		{
 			LPDRAWITEMSTRUCT di = (LPDRAWITEMSTRUCT) lParam;
-			if (!di || (di->CtlID != IDC_PICKER_ITEM) || (di->itemID == UINT_MAX))
+			if (!di) break;
+
+			// --- Preview box ---
+			if (di->CtlID == IDC_PICKER_PREVIEW)
+			{
+				FillRect(di->hDC, &di->rcItem, GetSysColorBrush(COLOR_WINDOW));
+				if (gPickerPreviewIcon)
+				{
+					int w = di->rcItem.right  - di->rcItem.left;
+					int h = di->rcItem.bottom - di->rcItem.top;
+					int sz = min(w, h) - 8;
+					if (sz < 1) sz = 1;
+					int ox = di->rcItem.left + (w - sz) / 2;
+					int oy = di->rcItem.top  + (h - sz) / 2;
+					DrawIconEx(di->hDC, ox, oy, gPickerPreviewIcon, sz, sz, 0, NULL, DI_NORMAL);
+				}
+				return TRUE;
+			}
+
+			if ((di->CtlID != IDC_PICKER_ITEM) || (di->itemID == UINT_MAX))
 				break;
 
 			HBRUSH bgBrush = NULL;
@@ -734,18 +959,42 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 				case IDC_PICKER_SEARCH:
 				if (HIWORD(wParam) == EN_CHANGE)
 				{
-					UpdatePickerSearchQuery(hWnd);
-					HWND hCat = GetDlgItem(hWnd, IDC_PICKER_CATEGORY);
-					int sel = (int) SendMessageW(hCat, LB_GETCURSEL, 0, 0);
-					PopulatePickerItems(hWnd, sel);
+					// Debounce heavy filtering work while user is typing.
+					SetTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID, PICKER_SEARCH_DEBOUNCE_MS, NULL);
 				}
 				break;
 
 				case IDC_PICKER_CATEGORY:
 				if (HIWORD(wParam) == LBN_SELCHANGE)
 				{
-					int sel = (int) SendMessageW((HWND) lParam, LB_GETCURSEL, 0, 0);
-					PopulatePickerItems(hWnd, sel);
+					// Clear preview when switching category.
+					ReleasePickerPreviewIcon();
+					HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
+					if (hPreview) InvalidateRect(hPreview, NULL, TRUE);
+					ApplyPickerSearchNow(hWnd);
+				}
+				break;
+
+				case IDC_PICKER_ITEM:
+				if (HIWORD(wParam) == LBN_SELCHANGE)
+				{
+					HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
+					int itemSel = (int) SendMessageW(hItem, LB_GETCURSEL, 0, 0);
+					if (itemSel != LB_ERR)
+					{
+						int visIdx = (int) SendMessageW(hItem, LB_GETITEMDATA, (WPARAM) itemSel, 0);
+						if ((visIdx >= 0) && (visIdx < (int) gPickerVisibleItems.size()))
+						{
+							const PickerVisibleItem& vi = gPickerVisibleItems[visIdx];
+							if ((vi.categoryIndex >= 0) && (vi.categoryIndex < (int) gPickerCategories.size()) &&
+								(vi.itemIndex >= 0) && (vi.itemIndex < (int) gPickerCategories[vi.categoryIndex].items.size()))
+							{
+								LoadPickerPreviewIcon(gPickerCategories[vi.categoryIndex].items[vi.itemIndex]);
+							}
+						}
+					}
+					HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
+					if (hPreview) InvalidateRect(hPreview, NULL, TRUE);
 				}
 				break;
 
@@ -776,7 +1025,7 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 						// Apply built-in colors using the currently running EXE resources.
 						std::wstring exePath = GetCurrentExePath();
 						if (!exePath.empty())
-							SetFolderIconResource(exePath.c_str(), item.builtInIndex + iconOffsetGlobal, (LPWSTR) gPickerTargetFolder.c_str());
+							SetFolderIconResource(exePath.c_str(), item.builtInOffset + item.builtInIndex, (LPWSTR) gPickerTargetFolder.c_str());
 						else
 							SetFolderColor(item.builtInIndex, (LPWSTR) gPickerTargetFolder.c_str());
 					}
@@ -847,12 +1096,23 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 		}
 		return 0;
 
+		case WM_TIMER:
+		if (wParam == PICKER_SEARCH_DEBOUNCE_TIMER_ID)
+		{
+			KillTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID);
+			ApplyPickerSearchNow(hWnd);
+			return 0;
+		}
+		break;
+
 		case WM_CLOSE:
 		DestroyWindow(hWnd);
 		return 0;
 
 		case WM_DESTROY:
+		KillTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID);
 		ReleasePickerIcons();
+		ReleasePickerPreviewIcon();
 		gPickerVisibleItems.clear();
 		gPickerSearchQuery.clear();
 		PostQuitMessage(0);
@@ -890,7 +1150,7 @@ static int ShowFolderIconPicker(LPCWSTR folderPath)
 		wc.lpszClassName,
 		L"Color Folder",
 		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-		CW_USEDEFAULT, CW_USEDEFAULT, 680, 480,
+		CW_USEDEFAULT, CW_USEDEFAULT, 730, 480,
 		NULL, NULL, wc.hInstance, NULL);
 
 	if (!hWnd)
@@ -902,6 +1162,43 @@ static int ShowFolderIconPicker(LPCWSTR folderPath)
 	MSG msg = {};
 	while (GetMessage(&msg, NULL, 0, 0) > 0)
 	{
+		// Handle search shortcuts globally before dispatching to child controls.
+		if (msg.message == WM_KEYDOWN)
+		{
+			BOOL handled = FALSE;
+			HWND hSearch = GetDlgItem(hWnd, IDC_PICKER_SEARCH);
+
+			if ((msg.wParam == VK_F2) ||
+				(msg.wParam == 'F' && (GetKeyState(VK_CONTROL) & 0x8000)))
+			{
+				// Focus the search bar and select all existing text.
+				if (hSearch)
+				{
+					SetFocus(hSearch);
+					SendMessageW(hSearch, EM_SETSEL, 0, -1);
+				}
+				handled = TRUE;
+			}
+			else if (msg.wParam == VK_ESCAPE)
+			{
+				if (hSearch && (GetFocus() == hSearch))
+				{
+					// Clear search and apply immediately.
+					SetWindowTextW(hSearch, L"");
+					KillTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID);
+					ApplyPickerSearchNow(hWnd);
+				}
+				else
+				{
+					DestroyWindow(hWnd);
+				}
+				handled = TRUE;
+			}
+
+			if (handled)
+				continue;
+		}
+
 		TranslateMessage(&msg);
 		DispatchMessage(&msg);
 	}

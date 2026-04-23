@@ -978,15 +978,15 @@ static void WriteSystemIconsMenu(HKEY shellKey, UINT& order, const std::wstring&
     struct SysEntry { LPCWSTR envPath; LPCWSTR label; };
     static const SysEntry sysEntries[] =
     {
-        { L"%SystemRoot%\\System32\\imageres.dll",         L"imageres"         },
-        { L"%SystemRoot%\\System32\\shell32.dll",          L"shell32"          },
-        { L"%SystemRoot%\\System32\\pifmgr.dll",           L"pifmgr"           },
-        { L"%SystemRoot%\\System32\\ddores.dll",           L"ddores"           },
-        { L"%SystemRoot%\\System32\\accessibilitycpl.dll", L"accessibilitycpl" },
-        { L"%SystemRoot%\\System32\\mmres.dll",            L"mmres"            },
-        { L"%SystemRoot%\\System32\\netshell.dll",         L"netshell"         },
-        { L"%SystemRoot%\\explorer.exe",                   L"explorer"         },
-        { L"%SystemRoot%\\System32\\wmploc.DLL",           L"wmploc"           },
+        { L"%SystemRoot%\\System32\\imageres.dll",         L"Windows Icon Library (imageres.dll)"         },
+        { L"%SystemRoot%\\System32\\shell32.dll",          L"Windows Shell Core (shell32.dll)"            },
+        { L"%SystemRoot%\\System32\\pifmgr.dll",           L"Legacy Program Icons (pifmgr.dll)"           },
+        { L"%SystemRoot%\\System32\\ddores.dll",           L"Device Category Resources (ddores.dll)"      },
+        { L"%SystemRoot%\\System32\\accessibilitycpl.dll", L"Ease of Access (accessibilitycpl.dll)"       },
+        { L"%SystemRoot%\\System32\\mmres.dll",            L"Audio Resources (mmres.dll)"                 },
+        { L"%SystemRoot%\\System32\\netshell.dll",         L"Network Connections (netshell.dll)"          },
+        { L"%SystemRoot%\\explorer.exe",                     L"File Explorer Shell (explorer.exe)"          },
+        { L"%SystemRoot%\\System32\\wmploc.DLL",           L"Media Player Resources (wmploc.dll)"         },
     };
 
     /* Use imageres icon 109 (settings/tools) as the System submenu icon. */
