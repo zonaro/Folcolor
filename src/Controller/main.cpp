@@ -240,13 +240,15 @@ enum PickerColorCategoryIndex
 #define IDC_PICKER_SEARCH 2007
 #define IDC_PICKER_OPEN_ICONS 2008
 #define IDC_PICKER_PREVIEW 2009
+#define IDC_PICKER_PREVIEW_LABEL 2010
 
 #define PICKER_SEARCH_DEBOUNCE_TIMER_ID 1
 #define PICKER_SEARCH_DEBOUNCE_MS 500
 
-/** Large icon displayed in the preview box (96x96). */
-static HICON gPickerPreviewIcon = NULL;
+/** Large icon displayed in the preview box. */
+static HICON gPickerPreviewIcon     = NULL;
 static BOOL  gPickerPreviewOwnsIcon = FALSE;
+static BOOL  gPickerPreviewIsFolder = FALSE; // TRUE when showing the folder's current icon
 
 /**
  * Return lowercase copy for case-insensitive matching.
@@ -775,6 +777,58 @@ static void ReleasePickerPreviewIcon()
 }
 
 /**
+ * Update the preview label text to reflect what is being shown.
+ */
+static void UpdatePickerPreviewLabel(HWND hWnd)
+{
+	HWND hLabel = GetDlgItem(hWnd, IDC_PICKER_PREVIEW_LABEL);
+	if (!hLabel) return;
+	if (gPickerPreviewIsFolder)
+		SetWindowTextW(hLabel, L"Current icon  (click to restore)");
+	else if (gPickerPreviewIcon)
+		SetWindowTextW(hLabel, L"Preview  (click for current icon)");
+	else
+		SetWindowTextW(hLabel, L"Preview  (no icon set)");
+}
+
+/**
+ * Load the current icon of gPickerTargetFolder into the preview box.
+ * Reads desktop.ini via SHGetSetFolderCustomSettings and then extracts
+ * the largest available frame using PrivateExtractIconsW.
+ * If the folder has no custom icon the preview is cleared.
+ */
+static void LoadFolderCurrentPreviewIcon()
+{
+	ReleasePickerPreviewIcon();
+	gPickerPreviewIsFolder = FALSE;
+
+	if (gPickerTargetFolder.empty())
+		return;
+
+	// Read current icon assignment from folder's desktop.ini.
+	SHFOLDERCUSTOMSETTINGS pfcs = {};
+	pfcs.dwSize  = sizeof(SHFOLDERCUSTOMSETTINGS);
+	pfcs.dwMask  = FCSM_ICONFILE;
+	WCHAR iconPath[MAX_PATH] = {};
+	pfcs.pszIconFile  = iconPath;
+	pfcs.cchIconFile  = MAX_PATH;
+
+	if (FAILED(SHGetSetFolderCustomSettings(&pfcs, gPickerTargetFolder.c_str(), FCS_READ)))
+		return;
+	if (!iconPath[0])
+		return;
+
+	HICON hIco  = NULL;
+	UINT  iconId = 0;
+	if (PrivateExtractIconsW(iconPath, pfcs.iIconIndex, 256, 256, &hIco, &iconId, 1, 0) > 0 && hIco)
+	{
+		gPickerPreviewIcon     = hIco;
+		gPickerPreviewOwnsIcon = TRUE;
+		gPickerPreviewIsFolder = TRUE;
+	}
+}
+
+/**
  * Load the largest available icon frame (up to 256x256) for the given PickerItem
  * directly from the source resource, without upscaling the small listbox icon.
  * Uses PrivateExtractIconsW so the same file-offset index convention as
@@ -853,8 +907,8 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 
 			// --- Preview panel (right of icon list) ---
 			CreateWindowW(L"STATIC", L"Preview", WS_CHILD | WS_VISIBLE,
-				546, 12, 150, 18, hWnd, NULL, NULL, NULL);
-			CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW | WS_BORDER,
+				546, 12, 150, 18, hWnd, (HMENU) IDC_PICKER_PREVIEW_LABEL, NULL, NULL);
+			CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW | SS_NOTIFY | WS_BORDER,
 				546, 32, 150, 150, hWnd, (HMENU) IDC_PICKER_PREVIEW, NULL, NULL);
 
 			CreateWindowW(L"BUTTON", L"Apply Icon", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
@@ -869,6 +923,10 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 				476, 404, 70, 28, hWnd, (HMENU) IDC_PICKER_CANCEL, NULL, NULL);
 
 			PopulatePickerCategories(hWnd);
+
+			// Show the folder's existing icon in the preview until user picks something.
+			LoadFolderCurrentPreviewIcon();
+			UpdatePickerPreviewLabel(hWnd);
 		}
 		return 0;
 
@@ -956,6 +1014,17 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 		{
 			switch (LOWORD(wParam))
 			{
+				case IDC_PICKER_PREVIEW:
+				if (HIWORD(wParam) == STN_CLICKED)
+				{
+					// Reload and display the folder's current (existing) icon.
+					LoadFolderCurrentPreviewIcon();
+					HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
+					if (hPreview) InvalidateRect(hPreview, NULL, TRUE);
+					UpdatePickerPreviewLabel(hWnd);
+				}
+				break;
+
 				case IDC_PICKER_SEARCH:
 				if (HIWORD(wParam) == EN_CHANGE)
 				{
@@ -971,6 +1040,7 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 					ReleasePickerPreviewIcon();
 					HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
 					if (hPreview) InvalidateRect(hPreview, NULL, TRUE);
+					UpdatePickerPreviewLabel(hWnd);
 					ApplyPickerSearchNow(hWnd);
 				}
 				break;
@@ -995,6 +1065,7 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 					}
 					HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
 					if (hPreview) InvalidateRect(hPreview, NULL, TRUE);
+					UpdatePickerPreviewLabel(hWnd);
 				}
 				break;
 
