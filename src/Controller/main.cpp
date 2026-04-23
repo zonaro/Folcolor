@@ -246,9 +246,10 @@ enum PickerColorCategoryIndex
 #define PICKER_SEARCH_DEBOUNCE_MS 500
 
 /** Large icon displayed in the preview box. */
-static HICON gPickerPreviewIcon     = NULL;
-static BOOL  gPickerPreviewOwnsIcon = FALSE;
-static BOOL  gPickerPreviewIsFolder = FALSE; // TRUE when showing the folder's current icon
+static HICON gPickerPreviewIcon      = NULL;
+static BOOL  gPickerPreviewOwnsIcon  = FALSE;
+static BOOL  gPickerPreviewIsFolder  = FALSE; // TRUE when showing the folder's current icon
+static BOOL  gPickerPreviewIsDefault = FALSE; // TRUE when showing the OS default folder icon (no custom icon set)
 
 /**
  * Return lowercase copy for case-insensitive matching.
@@ -772,8 +773,10 @@ static void ReleasePickerPreviewIcon()
 {
 	if (gPickerPreviewOwnsIcon && gPickerPreviewIcon)
 		DestroyIcon(gPickerPreviewIcon);
-	gPickerPreviewIcon = NULL;
-	gPickerPreviewOwnsIcon = FALSE;
+	gPickerPreviewIcon      = NULL;
+	gPickerPreviewOwnsIcon  = FALSE;
+	gPickerPreviewIsFolder  = FALSE;
+	gPickerPreviewIsDefault = FALSE;
 }
 
 /**
@@ -783,12 +786,14 @@ static void UpdatePickerPreviewLabel(HWND hWnd)
 {
 	HWND hLabel = GetDlgItem(hWnd, IDC_PICKER_PREVIEW_LABEL);
 	if (!hLabel) return;
-	if (gPickerPreviewIsFolder)
+	if (gPickerPreviewIsDefault)
+		SetWindowTextW(hLabel, L"Default OS icon  (click for current)");
+	else if (gPickerPreviewIsFolder)
 		SetWindowTextW(hLabel, L"Current icon  (click to restore)");
 	else if (gPickerPreviewIcon)
 		SetWindowTextW(hLabel, L"Preview  (click for current icon)");
 	else
-		SetWindowTextW(hLabel, L"Preview  (no icon set)");
+		SetWindowTextW(hLabel, L"Preview");
 }
 
 /**
@@ -800,7 +805,6 @@ static void UpdatePickerPreviewLabel(HWND hWnd)
 static void LoadFolderCurrentPreviewIcon()
 {
 	ReleasePickerPreviewIcon();
-	gPickerPreviewIsFolder = FALSE;
 
 	if (gPickerTargetFolder.empty())
 		return;
@@ -813,18 +817,49 @@ static void LoadFolderCurrentPreviewIcon()
 	pfcs.pszIconFile  = iconPath;
 	pfcs.cchIconFile  = MAX_PATH;
 
-	if (FAILED(SHGetSetFolderCustomSettings(&pfcs, gPickerTargetFolder.c_str(), FCS_READ)))
-		return;
-	if (!iconPath[0])
-		return;
+	BOOL hasCustomIcon = SUCCEEDED(SHGetSetFolderCustomSettings(&pfcs, gPickerTargetFolder.c_str(), FCS_READ))
+	                     && iconPath[0];
 
-	HICON hIco  = NULL;
-	UINT  iconId = 0;
-	if (PrivateExtractIconsW(iconPath, pfcs.iIconIndex, 256, 256, &hIco, &iconId, 1, 0) > 0 && hIco)
+	if (hasCustomIcon)
 	{
-		gPickerPreviewIcon     = hIco;
-		gPickerPreviewOwnsIcon = TRUE;
-		gPickerPreviewIsFolder = TRUE;
+		HICON hIco  = NULL;
+		UINT  iconId = 0;
+		if (PrivateExtractIconsW(iconPath, pfcs.iIconIndex, 256, 256, &hIco, &iconId, 1, 0) > 0 && hIco)
+		{
+			gPickerPreviewIcon     = hIco;
+			gPickerPreviewOwnsIcon = TRUE;
+			gPickerPreviewIsFolder = TRUE;
+		}
+		return;
+	}
+
+	// No custom icon — show the default OS folder icon so the user can see
+	// what the folder currently looks like before picking a color.
+	SHSTOCKICONINFO sii = {};
+	sii.cbSize = sizeof(sii);
+	if (SUCCEEDED(SHGetStockIconInfo(SIID_FOLDER, SHGSI_ICONLOCATION, &sii)))
+	{
+		HICON hIco  = NULL;
+		UINT  iconId = 0;
+		if (PrivateExtractIconsW(sii.szPath, sii.iIcon, 256, 256, &hIco, &iconId, 1, 0) > 0 && hIco)
+		{
+			gPickerPreviewIcon      = hIco;
+			gPickerPreviewOwnsIcon  = TRUE;
+			gPickerPreviewIsFolder  = TRUE;
+			gPickerPreviewIsDefault = TRUE;
+			return;
+		}
+	}
+
+	// Fallback path: ask shell directly for the folder icon handle.
+	SHFILEINFOW sfi = {};
+	if (SHGetFileInfoW(gPickerTargetFolder.c_str(), FILE_ATTRIBUTE_DIRECTORY, &sfi, sizeof(sfi),
+		SHGFI_ICON | SHGFI_LARGEICON | SHGFI_USEFILEATTRIBUTES) && sfi.hIcon)
+	{
+		gPickerPreviewIcon      = sfi.hIcon;
+		gPickerPreviewOwnsIcon  = TRUE;
+		gPickerPreviewIsFolder  = TRUE;
+		gPickerPreviewIsDefault = TRUE;
 	}
 }
 
@@ -1036,7 +1071,14 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 				case IDC_PICKER_CATEGORY:
 				if (HIWORD(wParam) == LBN_SELCHANGE)
 				{
-					// Clear preview when switching category.
+					// Clear search and preview when switching category.
+					HWND hSearch = GetDlgItem(hWnd, IDC_PICKER_SEARCH);
+					if (hSearch)
+					{
+						KillTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID);
+						SetWindowTextW(hSearch, L"");
+						gPickerSearchQuery.clear();
+					}
 					ReleasePickerPreviewIcon();
 					HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
 					if (hPreview) InvalidateRect(hPreview, NULL, TRUE);
