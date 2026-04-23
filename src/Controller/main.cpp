@@ -280,6 +280,13 @@ static BOOL  gPickerPreviewIsDefault = FALSE; // TRUE when showing the OS defaul
 #define IDC_DERIVED_LABEL_SCALE 3018
 #define IDC_DERIVED_LABEL_POSX 3019
 #define IDC_DERIVED_LABEL_POSY 3020
+#define IDC_DERIVED_EDIT_HUE 3021
+#define IDC_DERIVED_EDIT_SATURATION 3022
+#define IDC_DERIVED_EDIT_OPACITY 3023
+#define IDC_DERIVED_EDIT_SCALE 3024
+#define IDC_DERIVED_EDIT_POSX 3025
+#define IDC_DERIVED_EDIT_POSY 3026
+#define IDC_DERIVED_COLORIZE 3027
 
 /** A user-loaded overlay layer in the derived icon editor. */
 struct DerivedLayer
@@ -295,6 +302,8 @@ struct DerivedLayer
 	int scale;
 	int posX;
 	int posY;
+	BOOL colorize;
+	BOOL isBase;
 };
 
 /** Runtime state for the derived icon editor window. */
@@ -307,9 +316,48 @@ struct DerivedEditorState
 	std::vector<BYTE> composedPixels;
 	std::vector<DerivedLayer> layers;
 	std::wstring savedPath;
+	BOOL syncingControls;
+	BOOL draggingLayer;
+	POINT dragStartPoint;
+	int dragStartPosX;
+	int dragStartPosY;
 };
 
 static DerivedEditorState gDerivedEditor = {};
+
+static LRESULT CALLBACK DerivedPreviewSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
+	UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+{
+	UNREFERENCED_PARAMETER(uIdSubclass);
+	UNREFERENCED_PARAMETER(dwRefData);
+	HWND hParent = GetParent(hWnd);
+	if (!hParent)
+		return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+
+	switch (uMsg)
+	{
+		case WM_MOUSEWHEEL:
+			SendMessageW(hParent, WM_MOUSEWHEEL, wParam, lParam);
+			return 0;
+
+		case WM_LBUTTONDOWN:
+		case WM_MOUSEMOVE:
+		case WM_LBUTTONUP:
+		{
+			POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
+			ClientToScreen(hWnd, &pt);
+			ScreenToClient(hParent, &pt);
+			SendMessageW(hParent, uMsg, wParam, MAKELPARAM(pt.x, pt.y));
+			return 0;
+		}
+
+		case WM_NCDESTROY:
+			RemoveWindowSubclass(hWnd, DerivedPreviewSubclassProc, 1);
+			break;
+	}
+
+	return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+}
 
 /**
  * Return lowercase copy for case-insensitive matching.
@@ -1348,6 +1396,40 @@ static void AdjustHueSaturation(BYTE& b, BYTE& g, BYTE& r, int hueDegrees, int s
 }
 
 
+/** Colorize grayscale-like pixels using the selected hue and saturation amount. */
+static void ColorizePixelIfGray(BYTE& b, BYTE& g, BYTE& r, int hueDegrees, int saturationPercent)
+{
+	int rb = abs((int) r - (int) b);
+	int rg = abs((int) r - (int) g);
+	int gb = abs((int) g - (int) b);
+	if ((rb > 6) || (rg > 6) || (gb > 6))
+		return;
+
+	double hue = (double) hueDegrees;
+	while (hue < 0.0) hue += 360.0;
+	while (hue >= 360.0) hue -= 360.0;
+	double sat = (double) max(0, min(200, saturationPercent)) / 100.0;
+	if (sat > 1.0) sat = 1.0;
+
+	double value = max((double) r, max((double) g, (double) b)) / 255.0;
+	double c = value * sat;
+	double x = c * (1.0 - fabs(fmod(hue / 60.0, 2.0) - 1.0));
+	double m = value - c;
+	double rr = 0.0, gg = 0.0, bb = 0.0;
+
+	if (hue < 60.0) { rr = c; gg = x; bb = 0.0; }
+	else if (hue < 120.0) { rr = x; gg = c; bb = 0.0; }
+	else if (hue < 180.0) { rr = 0.0; gg = c; bb = x; }
+	else if (hue < 240.0) { rr = 0.0; gg = x; bb = c; }
+	else if (hue < 300.0) { rr = x; gg = 0.0; bb = c; }
+	else { rr = c; gg = 0.0; bb = x; }
+
+	r = (BYTE) min(255.0, max(0.0, (rr + m) * 255.0));
+	g = (BYTE) min(255.0, max(0.0, (gg + m) * 255.0));
+	b = (BYTE) min(255.0, max(0.0, (bb + m) * 255.0));
+}
+
+
 /** Alpha-composite one source pixel over one destination pixel. */
 static void BlendPixelOver(BYTE* dst, BYTE sb, BYTE sg, BYTE sr, BYTE sa)
 {
@@ -1374,9 +1456,7 @@ static void BlendPixelOver(BYTE* dst, BYTE sb, BYTE sg, BYTE sr, BYTE sa)
 /** Rebuild composed preview pixels from base icon plus all overlay layers. */
 static void RebuildDerivedComposite()
 {
-	gDerivedEditor.composedPixels = gDerivedEditor.basePixels;
-	if (gDerivedEditor.composedPixels.size() != (size_t) 256 * 256 * 4)
-		gDerivedEditor.composedPixels.assign((size_t) 256 * 256 * 4, 0);
+	gDerivedEditor.composedPixels.assign((size_t) 256 * 256 * 4, 0);
 
 	for (size_t layerIndex = 0; layerIndex < gDerivedEditor.layers.size(); layerIndex++)
 	{
@@ -1416,7 +1496,11 @@ static void RebuildDerivedComposite()
 				BYTE a = srcPx[3];
 
 				AdjustHueSaturation(b, g, r, layer.hue, layer.saturation);
-				a = (BYTE) (((UINT) a * (UINT) layer.opacity) / 100U);
+				if (layer.colorize)
+					ColorizePixelIfGray(b, g, r, layer.hue, layer.saturation);
+
+				if (!layer.isBase)
+					a = (BYTE) (((UINT) a * (UINT) layer.opacity) / 100U);
 
 				BYTE* dstPx = &gDerivedEditor.composedPixels[((size_t) dstY * 256 + dstX) * 4];
 				BlendPixelOver(dstPx, b, g, r, a);
@@ -1600,10 +1684,129 @@ static HRESULT WriteMultiSizePngIcoFile(LPCWSTR targetPath, const std::vector<BY
 static std::wstring BuildLayerListLabel(const DerivedLayer& layer)
 {
 	WCHAR text[512] = {};
-	if (_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"%s  [H:%d S:%d%% O:%d%% Sc:%d%% X:%d Y:%d]",
-		layer.displayName.c_str(), layer.hue, layer.saturation, layer.opacity, layer.scale, layer.posX, layer.posY) < 1)
+	if (_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"%s%s  [H:%d S:%d%% O:%d%% C:%s Sc:%d%% X:%d Y:%d]",
+		layer.displayName.c_str(), layer.isBase ? L" (Fixed)" : L"", layer.hue, layer.saturation, layer.opacity,
+		layer.colorize ? L"On" : L"Off", layer.scale, layer.posX, layer.posY) < 1)
 		return layer.displayName;
 	return text;
+}
+
+
+/** Write an integer into an edit control. */
+static void SetEditIntValue(HWND hWnd, int controlId, int value)
+{
+	WCHAR text[32] = {};
+	_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"%d", value);
+	HWND hEdit = GetDlgItem(hWnd, controlId);
+	if (!hEdit)
+		return;
+	WCHAR current[32] = {};
+	GetWindowTextW(hEdit, current, _countof(current));
+	if (wcscmp(current, text) != 0)
+		SetWindowTextW(hEdit, text);
+}
+
+
+/** Parse integer from an edit control, clamped to range. */
+static int GetEditIntValue(HWND hWnd, int controlId, int minValue, int maxValue, int fallback)
+{
+	WCHAR text[64] = {};
+	GetWindowTextW(GetDlgItem(hWnd, controlId), text, _countof(text));
+	if (!text[0])
+		return fallback;
+	int value = _wtoi(text);
+	if (value < minValue) value = minValue;
+	if (value > maxValue) value = maxValue;
+	return value;
+}
+
+
+/** Return preview image rect (drawn icon area) in parent client coordinates. */
+static BOOL GetDerivedPreviewImageRect(HWND hWnd, RECT* outRect)
+{
+	if (!outRect)
+		return FALSE;
+	HWND hPreview = GetDlgItem(hWnd, IDC_DERIVED_PREVIEW);
+	if (!hPreview)
+		return FALSE;
+
+	RECT rc = {};
+	if (!GetWindowRect(hPreview, &rc))
+		return FALSE;
+	POINT tl = { rc.left, rc.top };
+	POINT br = { rc.right, rc.bottom };
+	ScreenToClient(hWnd, &tl);
+	ScreenToClient(hWnd, &br);
+
+	int boxW = br.x - tl.x;
+	int boxH = br.y - tl.y;
+	int draw = min(boxW, boxH) - 8;
+	if (draw < 1)
+		draw = 1;
+
+	outRect->left = tl.x + (boxW - draw) / 2;
+	outRect->top = tl.y + (boxH - draw) / 2;
+	outRect->right = outRect->left + draw;
+	outRect->bottom = outRect->top + draw;
+	return TRUE;
+}
+
+
+static int GetSelectedDerivedLayerIndex(HWND hWnd);
+static void UpdateDerivedSliderLabels(HWND hWnd, int layerIndex);
+static void RefreshDerivedLayerList(HWND hWnd);
+
+
+/** Apply slider + edit values into selected layer and refresh preview/list. */
+static void CommitDerivedLayerValues(HWND hWnd, BOOL fromEdits)
+{
+	int idx = GetSelectedDerivedLayerIndex(hWnd);
+	if (idx < 0)
+		return;
+
+	DerivedLayer& layer = gDerivedEditor.layers[idx];
+	if (fromEdits)
+	{
+		layer.hue = GetEditIntValue(hWnd, IDC_DERIVED_EDIT_HUE, -180, 180, layer.hue);
+		layer.saturation = GetEditIntValue(hWnd, IDC_DERIVED_EDIT_SATURATION, 0, 200, layer.saturation);
+		layer.opacity = GetEditIntValue(hWnd, IDC_DERIVED_EDIT_OPACITY, 0, 100, layer.opacity);
+		layer.scale = GetEditIntValue(hWnd, IDC_DERIVED_EDIT_SCALE, 10, 300, layer.scale);
+		layer.posX = GetEditIntValue(hWnd, IDC_DERIVED_EDIT_POSX, -128, 128, layer.posX);
+		layer.posY = GetEditIntValue(hWnd, IDC_DERIVED_EDIT_POSY, -128, 128, layer.posY);
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_SETPOS, TRUE, layer.hue);
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_SETPOS, TRUE, layer.saturation);
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_SETPOS, TRUE, layer.opacity);
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETPOS, TRUE, layer.scale);
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_SETPOS, TRUE, layer.posX);
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_SETPOS, TRUE, layer.posY);
+	}
+	else
+	{
+		layer.hue = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_GETPOS, 0, 0);
+		layer.saturation = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_GETPOS, 0, 0);
+		layer.opacity = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_GETPOS, 0, 0);
+		layer.scale = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_GETPOS, 0, 0);
+		layer.posX = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_GETPOS, 0, 0);
+		layer.posY = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_GETPOS, 0, 0);
+		gDerivedEditor.syncingControls = TRUE;
+		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_HUE, layer.hue);
+		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_SATURATION, layer.saturation);
+		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_OPACITY, layer.opacity);
+		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_SCALE, layer.scale);
+		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_POSX, layer.posX);
+		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_POSY, layer.posY);
+		gDerivedEditor.syncingControls = FALSE;
+	}
+
+	layer.colorize = (IsDlgButtonChecked(hWnd, IDC_DERIVED_COLORIZE) == BST_CHECKED);
+	if (layer.isBase)
+		layer.opacity = 100;
+
+	UpdateDerivedSliderLabels(hWnd, idx);
+	RefreshDerivedLayerList(hWnd);
+	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST), LB_SETCURSEL, idx, 0);
+	RebuildDerivedComposite();
+	InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
 }
 
 
@@ -1668,6 +1871,15 @@ static void UpdateDerivedSliderLabels(HWND hWnd, int layerIndex)
 
 	_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"Position Y: %d", layer.posY);
 	SetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_LABEL_POSY), text);
+
+	gDerivedEditor.syncingControls = TRUE;
+	SetEditIntValue(hWnd, IDC_DERIVED_EDIT_HUE, layer.hue);
+	SetEditIntValue(hWnd, IDC_DERIVED_EDIT_SATURATION, layer.saturation);
+	SetEditIntValue(hWnd, IDC_DERIVED_EDIT_OPACITY, layer.opacity);
+	SetEditIntValue(hWnd, IDC_DERIVED_EDIT_SCALE, layer.scale);
+	SetEditIntValue(hWnd, IDC_DERIVED_EDIT_POSX, layer.posX);
+	SetEditIntValue(hWnd, IDC_DERIVED_EDIT_POSY, layer.posY);
+	gDerivedEditor.syncingControls = FALSE;
 }
 
 
@@ -1676,8 +1888,8 @@ static void SyncDerivedControlsFromSelection(HWND hWnd)
 {
 	int idx = GetSelectedDerivedLayerIndex(hWnd);
 	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_REMOVE_LAYER), (idx >= 0));
-	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_MOVE_UP), (idx > 0));
-	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_MOVE_DOWN), (idx >= 0) && (idx < ((int) gDerivedEditor.layers.size() - 1)));
+	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_MOVE_UP), (idx > 1));
+	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_MOVE_DOWN), (idx > 0) && (idx < ((int) gDerivedEditor.layers.size() - 1)));
 
 	if (idx < 0)
 		return;
@@ -1689,6 +1901,10 @@ static void SyncDerivedControlsFromSelection(HWND hWnd)
 	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETPOS, TRUE, layer.scale);
 	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_SETPOS, TRUE, layer.posX);
 	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_SETPOS, TRUE, layer.posY);
+	CheckDlgButton(hWnd, IDC_DERIVED_COLORIZE, layer.colorize ? BST_CHECKED : BST_UNCHECKED);
+	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_REMOVE_LAYER), (idx > 0));
+	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), !layer.isBase);
+	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_EDIT_OPACITY), !layer.isBase);
 	UpdateDerivedSliderLabels(hWnd, idx);
 }
 
@@ -1696,22 +1912,7 @@ static void SyncDerivedControlsFromSelection(HWND hWnd)
 /** Read current slider values and write them back into selected layer. */
 static void ApplyDerivedControlsToSelection(HWND hWnd)
 {
-	int idx = GetSelectedDerivedLayerIndex(hWnd);
-	if (idx < 0)
-		return;
-
-	DerivedLayer& layer = gDerivedEditor.layers[idx];
-	layer.hue = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_GETPOS, 0, 0);
-	layer.saturation = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_GETPOS, 0, 0);
-	layer.opacity = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_GETPOS, 0, 0);
-	layer.scale = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_GETPOS, 0, 0);
-	layer.posX = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_GETPOS, 0, 0);
-	layer.posY = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_GETPOS, 0, 0);
-
-	UpdateDerivedSliderLabels(hWnd, idx);
-	RefreshDerivedLayerList(hWnd);
-	RebuildDerivedComposite();
-	InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
+	CommitDerivedLayerValues(hWnd, FALSE);
 }
 
 
@@ -1757,9 +1958,12 @@ static void AddDerivedLayerFromFile(HWND hWnd)
 	layer.scale = 100;
 	layer.posX = 0;
 	layer.posY = 0;
+	layer.colorize = FALSE;
+	layer.isBase = FALSE;
 
 	gDerivedEditor.layers.push_back(layer);
 	RefreshDerivedLayerList(hWnd);
+	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST), LB_SETCURSEL, (WPARAM) (gDerivedEditor.layers.size() - 1), 0);
 	SyncDerivedControlsFromSelection(hWnd);
 	RebuildDerivedComposite();
 	InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
@@ -1836,8 +2040,10 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 
 			CreateWindowW(L"STATIC", L"Composed Preview", WS_CHILD | WS_VISIBLE,
 				12, 12, 220, 20, hWnd, NULL, NULL, NULL);
-			CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW | WS_BORDER,
+			HWND hPreview = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW | SS_NOTIFY | WS_BORDER,
 				12, 36, 220, 220, hWnd, (HMENU) IDC_DERIVED_PREVIEW, NULL, NULL);
+			if (hPreview)
+				SetWindowSubclass(hPreview, DerivedPreviewSubclassProc, 1, 0);
 
 			CreateWindowW(L"STATIC", L"Layers", WS_CHILD | WS_VISIBLE,
 				248, 12, 220, 20, hWnd, NULL, NULL, NULL);
@@ -1855,31 +2061,45 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 
 			CreateWindowW(L"STATIC", L"Hue: 0", WS_CHILD | WS_VISIBLE,
 				248, 272, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_HUE, NULL, NULL);
+			CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+				552, 272, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_HUE, NULL, NULL);
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
 				248, 292, 300, 34, hWnd, (HMENU) IDC_DERIVED_HUE, NULL, NULL);
 
 			CreateWindowW(L"STATIC", L"Saturation: 100%", WS_CHILD | WS_VISIBLE,
 				248, 328, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_SATURATION, NULL, NULL);
+			CreateWindowW(L"EDIT", L"100", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+				552, 328, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_SATURATION, NULL, NULL);
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
 				248, 348, 300, 34, hWnd, (HMENU) IDC_DERIVED_SATURATION, NULL, NULL);
 
 			CreateWindowW(L"STATIC", L"Opacity: 100%", WS_CHILD | WS_VISIBLE,
 				248, 384, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_OPACITY, NULL, NULL);
+			CreateWindowW(L"EDIT", L"100", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+				552, 384, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_OPACITY, NULL, NULL);
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
 				248, 404, 300, 34, hWnd, (HMENU) IDC_DERIVED_OPACITY, NULL, NULL);
+			CreateWindowW(L"BUTTON", L"Colorize grayscale", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+				248, 442, 180, 20, hWnd, (HMENU) IDC_DERIVED_COLORIZE, NULL, NULL);
 
 			CreateWindowW(L"STATIC", L"Scale: 100%", WS_CHILD | WS_VISIBLE,
 				560, 272, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_SCALE, NULL, NULL);
+			CreateWindowW(L"EDIT", L"100", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+				774, 272, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_SCALE, NULL, NULL);
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
 				560, 292, 260, 34, hWnd, (HMENU) IDC_DERIVED_SCALE, NULL, NULL);
 
 			CreateWindowW(L"STATIC", L"Position X: 0", WS_CHILD | WS_VISIBLE,
 				560, 328, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_POSX, NULL, NULL);
+			CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+				774, 328, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_POSX, NULL, NULL);
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
 				560, 348, 260, 34, hWnd, (HMENU) IDC_DERIVED_POSX, NULL, NULL);
 
 			CreateWindowW(L"STATIC", L"Position Y: 0", WS_CHILD | WS_VISIBLE,
 				560, 384, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_POSY, NULL, NULL);
+			CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+				774, 384, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_POSY, NULL, NULL);
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
 				560, 404, 260, 34, hWnd, (HMENU) IDC_DERIVED_POSY, NULL, NULL);
 
@@ -1946,6 +2166,73 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 			ApplyDerivedControlsToSelection(hWnd);
 			return 0;
 
+		case WM_MOUSEWHEEL:
+		{
+			RECT imageRect = {};
+			if (!GetDerivedPreviewImageRect(hWnd, &imageRect))
+				break;
+			POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
+			ScreenToClient(hWnd, &pt);
+			if (!PtInRect(&imageRect, pt))
+				break;
+
+			int idx = GetSelectedDerivedLayerIndex(hWnd);
+			if (idx < 0)
+				break;
+
+			int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+			int step = (delta > 0) ? 5 : -5;
+			gDerivedEditor.layers[idx].scale = min(300, max(10, gDerivedEditor.layers[idx].scale + step));
+			CommitDerivedLayerValues(hWnd, FALSE);
+			return 0;
+		}
+
+		case WM_LBUTTONDOWN:
+		{
+			RECT imageRect = {};
+			if (!GetDerivedPreviewImageRect(hWnd, &imageRect))
+				break;
+			POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
+			if (!PtInRect(&imageRect, pt))
+				break;
+			int idx = GetSelectedDerivedLayerIndex(hWnd);
+			if (idx < 0)
+				break;
+
+			gDerivedEditor.draggingLayer = TRUE;
+			gDerivedEditor.dragStartPoint = pt;
+			gDerivedEditor.dragStartPosX = gDerivedEditor.layers[idx].posX;
+			gDerivedEditor.dragStartPosY = gDerivedEditor.layers[idx].posY;
+			SetCapture(hWnd);
+			return 0;
+		}
+
+		case WM_MOUSEMOVE:
+			if (gDerivedEditor.draggingLayer)
+			{
+				int idx = GetSelectedDerivedLayerIndex(hWnd);
+				if (idx >= 0)
+				{
+					POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
+					int dx = pt.x - gDerivedEditor.dragStartPoint.x;
+					int dy = pt.y - gDerivedEditor.dragStartPoint.y;
+					gDerivedEditor.layers[idx].posX = min(128, max(-128, gDerivedEditor.dragStartPosX + dx));
+					gDerivedEditor.layers[idx].posY = min(128, max(-128, gDerivedEditor.dragStartPosY + dy));
+					CommitDerivedLayerValues(hWnd, FALSE);
+				}
+				return 0;
+			}
+			break;
+
+		case WM_LBUTTONUP:
+			if (gDerivedEditor.draggingLayer)
+			{
+				gDerivedEditor.draggingLayer = FALSE;
+				ReleaseCapture();
+				return 0;
+			}
+			break;
+
 		case WM_COMMAND:
 			switch (LOWORD(wParam))
 			{
@@ -1954,6 +2241,21 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 					SyncDerivedControlsFromSelection(hWnd);
 				break;
 
+				case IDC_DERIVED_EDIT_HUE:
+				case IDC_DERIVED_EDIT_SATURATION:
+				case IDC_DERIVED_EDIT_OPACITY:
+				case IDC_DERIVED_EDIT_SCALE:
+				case IDC_DERIVED_EDIT_POSX:
+				case IDC_DERIVED_EDIT_POSY:
+					if ((HIWORD(wParam) == EN_CHANGE) && !gDerivedEditor.syncingControls)
+						CommitDerivedLayerValues(hWnd, TRUE);
+					break;
+
+				case IDC_DERIVED_COLORIZE:
+					if (HIWORD(wParam) == BN_CLICKED)
+						CommitDerivedLayerValues(hWnd, FALSE);
+					break;
+
 				case IDC_DERIVED_ADD_LAYER:
 					AddDerivedLayerFromFile(hWnd);
 					break;
@@ -1961,7 +2263,7 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 				case IDC_DERIVED_REMOVE_LAYER:
 				{
 					int idx = GetSelectedDerivedLayerIndex(hWnd);
-					if (idx >= 0)
+					if (idx > 0)
 					{
 						gDerivedEditor.layers.erase(gDerivedEditor.layers.begin() + idx);
 						RefreshDerivedLayerList(hWnd);
@@ -1975,7 +2277,7 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 				case IDC_DERIVED_MOVE_UP:
 				{
 					int idx = GetSelectedDerivedLayerIndex(hWnd);
-					if (idx > 0)
+					if (idx > 1)
 					{
 						std::swap(gDerivedEditor.layers[idx], gDerivedEditor.layers[idx - 1]);
 						RefreshDerivedLayerList(hWnd);
@@ -1990,7 +2292,7 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 				case IDC_DERIVED_MOVE_DOWN:
 				{
 					int idx = GetSelectedDerivedLayerIndex(hWnd);
-					if ((idx >= 0) && (idx < ((int) gDerivedEditor.layers.size() - 1)))
+					if ((idx > 0) && (idx < ((int) gDerivedEditor.layers.size() - 1)))
 					{
 						std::swap(gDerivedEditor.layers[idx], gDerivedEditor.layers[idx + 1]);
 						RefreshDerivedLayerList(hWnd);
@@ -2018,6 +2320,7 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 			return 0;
 
 		case WM_DESTROY:
+			gDerivedEditor.draggingLayer = FALSE;
 			return 0;
 	}
 
@@ -2038,6 +2341,22 @@ static BOOL ShowDerivedIconEditor(HWND hParent, const PickerItem& baseItem, std:
 		MessageBoxA(hParent, "Unable to load the selected base icon.", "Error:", MB_OK | MB_ICONERROR);
 		return FALSE;
 	}
+
+	DerivedLayer baseLayer = {};
+	baseLayer.sourcePath = L"<base>";
+	baseLayer.displayName = L"Base Icon";
+	baseLayer.pixels = gDerivedEditor.basePixels;
+	baseLayer.width = 256;
+	baseLayer.height = 256;
+	baseLayer.hue = 0;
+	baseLayer.saturation = 100;
+	baseLayer.opacity = 100;
+	baseLayer.scale = 100;
+	baseLayer.posX = 0;
+	baseLayer.posY = 0;
+	baseLayer.colorize = FALSE;
+	baseLayer.isBase = TRUE;
+	gDerivedEditor.layers.push_back(baseLayer);
 
 	RebuildDerivedComposite();
 
