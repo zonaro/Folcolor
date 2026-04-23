@@ -2062,46 +2062,46 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 			CreateWindowW(L"STATIC", L"Hue: 0", WS_CHILD | WS_VISIBLE,
 				248, 272, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_HUE, NULL, NULL);
 			CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				552, 272, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_HUE, NULL, NULL);
+				500, 300, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_HUE, NULL, NULL);
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				248, 292, 300, 34, hWnd, (HMENU) IDC_DERIVED_HUE, NULL, NULL);
+				248, 292, 246, 34, hWnd, (HMENU) IDC_DERIVED_HUE, NULL, NULL);
 
 			CreateWindowW(L"STATIC", L"Saturation: 100%", WS_CHILD | WS_VISIBLE,
 				248, 328, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_SATURATION, NULL, NULL);
 			CreateWindowW(L"EDIT", L"100", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				552, 328, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_SATURATION, NULL, NULL);
+				500, 356, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_SATURATION, NULL, NULL);
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				248, 348, 300, 34, hWnd, (HMENU) IDC_DERIVED_SATURATION, NULL, NULL);
+				248, 348, 246, 34, hWnd, (HMENU) IDC_DERIVED_SATURATION, NULL, NULL);
 
 			CreateWindowW(L"STATIC", L"Opacity: 100%", WS_CHILD | WS_VISIBLE,
 				248, 384, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_OPACITY, NULL, NULL);
 			CreateWindowW(L"EDIT", L"100", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				552, 384, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_OPACITY, NULL, NULL);
+				500, 412, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_OPACITY, NULL, NULL);
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				248, 404, 300, 34, hWnd, (HMENU) IDC_DERIVED_OPACITY, NULL, NULL);
+				248, 404, 246, 34, hWnd, (HMENU) IDC_DERIVED_OPACITY, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Colorize grayscale", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
 				248, 442, 180, 20, hWnd, (HMENU) IDC_DERIVED_COLORIZE, NULL, NULL);
 
 			CreateWindowW(L"STATIC", L"Scale: 100%", WS_CHILD | WS_VISIBLE,
 				560, 272, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_SCALE, NULL, NULL);
 			CreateWindowW(L"EDIT", L"100", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				774, 272, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_SCALE, NULL, NULL);
+				770, 300, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_SCALE, NULL, NULL);
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				560, 292, 260, 34, hWnd, (HMENU) IDC_DERIVED_SCALE, NULL, NULL);
+				560, 292, 204, 34, hWnd, (HMENU) IDC_DERIVED_SCALE, NULL, NULL);
 
 			CreateWindowW(L"STATIC", L"Position X: 0", WS_CHILD | WS_VISIBLE,
 				560, 328, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_POSX, NULL, NULL);
 			CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				774, 328, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_POSX, NULL, NULL);
+				770, 356, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_POSX, NULL, NULL);
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				560, 348, 260, 34, hWnd, (HMENU) IDC_DERIVED_POSX, NULL, NULL);
+				560, 348, 204, 34, hWnd, (HMENU) IDC_DERIVED_POSX, NULL, NULL);
 
 			CreateWindowW(L"STATIC", L"Position Y: 0", WS_CHILD | WS_VISIBLE,
 				560, 384, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_POSY, NULL, NULL);
 			CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				774, 384, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_POSY, NULL, NULL);
+				770, 412, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_POSY, NULL, NULL);
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				560, 404, 260, 34, hWnd, (HMENU) IDC_DERIVED_POSY, NULL, NULL);
+				560, 404, 204, 34, hWnd, (HMENU) IDC_DERIVED_POSY, NULL, NULL);
 
 			CreateWindowW(L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
 				640, 454, 90, 30, hWnd, (HMENU) IDC_DERIVED_SAVE, NULL, NULL);
@@ -2183,6 +2183,7 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 			int delta = GET_WHEEL_DELTA_WPARAM(wParam);
 			int step = (delta > 0) ? 5 : -5;
 			gDerivedEditor.layers[idx].scale = min(300, max(10, gDerivedEditor.layers[idx].scale + step));
+			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].scale);
 			CommitDerivedLayerValues(hWnd, FALSE);
 			return 0;
 		}
@@ -2218,6 +2219,8 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 					int dy = pt.y - gDerivedEditor.dragStartPoint.y;
 					gDerivedEditor.layers[idx].posX = min(128, max(-128, gDerivedEditor.dragStartPosX + dx));
 					gDerivedEditor.layers[idx].posY = min(128, max(-128, gDerivedEditor.dragStartPosY + dy));
+					SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].posX);
+					SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].posY);
 					CommitDerivedLayerValues(hWnd, FALSE);
 				}
 				return 0;
