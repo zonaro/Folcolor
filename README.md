@@ -42,5 +42,5 @@ Windows 7 to 11 32bit or 64bit OS.
 ## Licensing
 The code and assets in this project is licensed under MIT license.  
 Copyright (c) 2026 Zonaro 
-https://github.com/zonaro/Foldrion/blob/main/LICENSE
+
 
