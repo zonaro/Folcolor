@@ -330,6 +330,9 @@ static BOOL  gPickerPreviewIsDefault = FALSE; // TRUE when showing the OS defaul
 #define IDC_DERIVED_SAVE_NAME_EDIT 3031
 #define IDC_DERIVED_SAVE_OK 3032
 #define IDC_DERIVED_SAVE_CANCEL 3033
+#define IDC_DERIVED_ROTATION 3034
+#define IDC_DERIVED_LABEL_ROTATION 3035
+#define IDC_DERIVED_EDIT_ROTATION 3036
 
 /** A user-loaded overlay layer in the derived icon editor. */
 struct DerivedLayer
@@ -345,6 +348,7 @@ struct DerivedLayer
 	int scale;
 	int posX;
 	int posY;
+	int rotation;
 	BOOL colorize;
 	BOOL isBase;
 };
@@ -2012,6 +2016,13 @@ static void RebuildDerivedComposite()
 		int drawH = max(1, (int) ((double) layer.height * scale + 0.5));
 		int startX = ((256 - drawW) / 2) + layer.posX;
 		int startY = ((256 - drawH) / 2) + layer.posY;
+		double centerX = (double) startX + ((double) drawW * 0.5);
+		double centerY = (double) startY + ((double) drawH * 0.5);
+		double halfW = (double) drawW * 0.5;
+		double halfH = (double) drawH * 0.5;
+		double angleRad = ((double) layer.rotation * 3.14159265358979323846) / 180.0;
+		double cosT = cos(angleRad);
+		double sinT = sin(angleRad);
 
 		for (int y = 0; y < drawH; y++)
 		{
@@ -2019,17 +2030,26 @@ static void RebuildDerivedComposite()
 			if ((dstY < 0) || (dstY >= 256))
 				continue;
 
-			UINT srcY = (UINT) (((UINT64) y * layer.height) / (UINT) drawH);
-			if (srcY >= layer.height) srcY = layer.height - 1;
-
 			for (int x = 0; x < drawW; x++)
 			{
 				int dstX = startX + x;
 				if ((dstX < 0) || (dstX >= 256))
 					continue;
 
-				UINT srcX = (UINT) (((UINT64) x * layer.width) / (UINT) drawW);
-				if (srcX >= layer.width) srcX = layer.width - 1;
+				double localX = ((double) dstX + 0.5) - centerX;
+				double localY = ((double) dstY + 0.5) - centerY;
+				double srcLocalX = (localX * cosT) + (localY * sinT);
+				double srcLocalY = (-localX * sinT) + (localY * cosT);
+				double srcNormX = srcLocalX / halfW;
+				double srcNormY = srcLocalY / halfH;
+
+				if ((srcNormX < -1.0) || (srcNormX > 1.0) || (srcNormY < -1.0) || (srcNormY > 1.0))
+					continue;
+
+				double srcFx = ((srcNormX + 1.0) * 0.5) * (double) (layer.width - 1);
+				double srcFy = ((srcNormY + 1.0) * 0.5) * (double) (layer.height - 1);
+				UINT srcX = (UINT) min((double) (layer.width - 1), max(0.0, srcFx + 0.5));
+				UINT srcY = (UINT) min((double) (layer.height - 1), max(0.0, srcFy + 0.5));
 
 				const BYTE* srcPx = &layer.pixels[((size_t) srcY * layer.width + srcX) * 4];
 				BYTE b = srcPx[0];
@@ -2226,9 +2246,9 @@ static HRESULT WriteMultiSizePngIcoFile(LPCWSTR targetPath, const std::vector<BY
 static std::wstring BuildLayerListLabel(const DerivedLayer& layer)
 {
 	WCHAR text[512] = {};
-	if (_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"%s%s  [H:%d S:%d%% O:%d%% C:%s Sc:%d%% X:%d Y:%d]",
+	if (_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"%s%s  [H:%d S:%d%% O:%d%% C:%s Sc:%d%% X:%d Y:%d R:%d]",
 		layer.displayName.c_str(), layer.isBase ? L" (Fixed)" : L"", layer.hue, layer.saturation, layer.opacity,
-		layer.colorize ? L"On" : L"Off", layer.scale, layer.posX, layer.posY) < 1)
+		layer.colorize ? L"On" : L"Off", layer.scale, layer.posX, layer.posY, layer.rotation) < 1)
 		return layer.displayName;
 	return text;
 }
@@ -2315,12 +2335,14 @@ static void CommitDerivedLayerValues(HWND hWnd, BOOL fromEdits)
 		layer.scale = GetEditIntValue(hWnd, IDC_DERIVED_EDIT_SCALE, 10, 300, layer.scale);
 		layer.posX = GetEditIntValue(hWnd, IDC_DERIVED_EDIT_POSX, -128, 128, layer.posX);
 		layer.posY = GetEditIntValue(hWnd, IDC_DERIVED_EDIT_POSY, -128, 128, layer.posY);
+		layer.rotation = GetEditIntValue(hWnd, IDC_DERIVED_EDIT_ROTATION, 0, 360, layer.rotation);
 		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_SETPOS, TRUE, layer.hue);
 		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_SETPOS, TRUE, layer.saturation);
 		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_SETPOS, TRUE, layer.opacity);
 		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETPOS, TRUE, layer.scale);
 		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_SETPOS, TRUE, layer.posX);
 		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_SETPOS, TRUE, layer.posY);
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_ROTATION), TBM_SETPOS, TRUE, layer.rotation);
 	}
 	else
 	{
@@ -2330,6 +2352,7 @@ static void CommitDerivedLayerValues(HWND hWnd, BOOL fromEdits)
 		layer.scale = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_GETPOS, 0, 0);
 		layer.posX = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_GETPOS, 0, 0);
 		layer.posY = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_GETPOS, 0, 0);
+		layer.rotation = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_ROTATION), TBM_GETPOS, 0, 0);
 		gDerivedEditor.syncingControls = TRUE;
 		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_HUE, layer.hue);
 		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_SATURATION, layer.saturation);
@@ -2337,12 +2360,16 @@ static void CommitDerivedLayerValues(HWND hWnd, BOOL fromEdits)
 		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_SCALE, layer.scale);
 		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_POSX, layer.posX);
 		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_POSY, layer.posY);
+		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_ROTATION, layer.rotation);
 		gDerivedEditor.syncingControls = FALSE;
 	}
 
 	layer.colorize = (IsDlgButtonChecked(hWnd, IDC_DERIVED_COLORIZE) == BST_CHECKED);
 	if (layer.isBase)
+	{
 		layer.opacity = 100;
+		layer.rotation = 0;
+	}
 
 	UpdateDerivedSliderLabels(hWnd, idx);
 	RefreshDerivedLayerList(hWnd);
@@ -2414,6 +2441,9 @@ static void UpdateDerivedSliderLabels(HWND hWnd, int layerIndex)
 	_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"Position Y: %d", layer.posY);
 	SetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_LABEL_POSY), text);
 
+	_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"Rotation: %d\xB0", layer.rotation);
+	SetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_LABEL_ROTATION), text);
+
 	gDerivedEditor.syncingControls = TRUE;
 	SetEditIntValue(hWnd, IDC_DERIVED_EDIT_HUE, layer.hue);
 	SetEditIntValue(hWnd, IDC_DERIVED_EDIT_SATURATION, layer.saturation);
@@ -2421,6 +2451,7 @@ static void UpdateDerivedSliderLabels(HWND hWnd, int layerIndex)
 	SetEditIntValue(hWnd, IDC_DERIVED_EDIT_SCALE, layer.scale);
 	SetEditIntValue(hWnd, IDC_DERIVED_EDIT_POSX, layer.posX);
 	SetEditIntValue(hWnd, IDC_DERIVED_EDIT_POSY, layer.posY);
+	SetEditIntValue(hWnd, IDC_DERIVED_EDIT_ROTATION, layer.rotation);
 	gDerivedEditor.syncingControls = FALSE;
 }
 
@@ -2443,10 +2474,13 @@ static void SyncDerivedControlsFromSelection(HWND hWnd)
 	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETPOS, TRUE, layer.scale);
 	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_SETPOS, TRUE, layer.posX);
 	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_SETPOS, TRUE, layer.posY);
+	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_ROTATION), TBM_SETPOS, TRUE, layer.rotation);
 	CheckDlgButton(hWnd, IDC_DERIVED_COLORIZE, layer.colorize ? BST_CHECKED : BST_UNCHECKED);
 	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_REMOVE_LAYER), (idx > 0));
 	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), !layer.isBase);
 	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_EDIT_OPACITY), !layer.isBase);
+	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_ROTATION), !layer.isBase);
+	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_EDIT_ROTATION), !layer.isBase);
 	UpdateDerivedSliderLabels(hWnd, idx);
 }
 
@@ -2500,6 +2534,7 @@ static void AddDerivedLayerFromFile(HWND hWnd)
 	layer.scale = 100;
 	layer.posX = 0;
 	layer.posY = 0;
+	layer.rotation = 0;
 	layer.colorize = FALSE;
 	layer.isBase = FALSE;
 
@@ -2634,10 +2669,17 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
 				560, 404, 204, 34, hWnd, (HMENU) IDC_DERIVED_POSY, NULL, NULL);
 
+			CreateWindowW(L"STATIC", L"Rotation: 0\xB0", WS_CHILD | WS_VISIBLE,
+				560, 440, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_ROTATION, NULL, NULL);
+			CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+				770, 468, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_ROTATION, NULL, NULL);
+			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+				560, 460, 204, 34, hWnd, (HMENU) IDC_DERIVED_ROTATION, NULL, NULL);
+
 			CreateWindowW(L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-				640, 454, 90, 30, hWnd, (HMENU) IDC_DERIVED_SAVE, NULL, NULL);
+				640, 504, 90, 30, hWnd, (HMENU) IDC_DERIVED_SAVE, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
-				736, 454, 90, 30, hWnd, (HMENU) IDC_DERIVED_CANCEL, NULL, NULL);
+				736, 504, 90, 30, hWnd, (HMENU) IDC_DERIVED_CANCEL, NULL, NULL);
 
 			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_SETRANGE, TRUE, MAKELONG(-180, 180));
 			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_SETRANGE, TRUE, MAKELONG(0, 200));
@@ -2645,6 +2687,7 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETRANGE, TRUE, MAKELONG(10, 300));
 			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_SETRANGE, TRUE, MAKELONG(-128, 128));
 			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_SETRANGE, TRUE, MAKELONG(-128, 128));
+			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_ROTATION), TBM_SETRANGE, TRUE, MAKELONG(0, 360));
 
 			RefreshDerivedLayerList(hWnd);
 			SyncDerivedControlsFromSelection(hWnd);
@@ -2745,8 +2788,48 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 
 			int delta = GET_WHEEL_DELTA_WPARAM(wParam);
 			int step = (delta > 0) ? 5 : -5;
-			gDerivedEditor.layers[idx].scale = min(300, max(10, gDerivedEditor.layers[idx].scale + step));
-			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].scale);
+			BOOL ctrlDown = ((GetKeyState(VK_CONTROL) & 0x8000) != 0);
+			BOOL shiftDown = ((GetKeyState(VK_SHIFT) & 0x8000) != 0);
+
+			if (ctrlDown && !shiftDown)
+			{
+				if (!gDerivedEditor.layers[idx].isBase)
+				{
+					gDerivedEditor.layers[idx].opacity = min(100, max(0, gDerivedEditor.layers[idx].opacity + step));
+					SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].opacity);
+				}
+			}
+			else if (ctrlDown && shiftDown)
+			{
+				if (!gDerivedEditor.layers[idx].isBase)
+				{
+					int newHue = gDerivedEditor.layers[idx].hue + step;
+					int newSat = gDerivedEditor.layers[idx].saturation + step;
+					gDerivedEditor.layers[idx].hue = min(180, max(-180, newHue));
+					gDerivedEditor.layers[idx].saturation = min(200, max(0, newSat));
+					SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].hue);
+					SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].saturation);
+				}
+			}
+			else if (!ctrlDown && shiftDown)
+			{
+				if (!gDerivedEditor.layers[idx].isBase)
+				{
+					int rotation = gDerivedEditor.layers[idx].rotation + step;
+					while (rotation < 0)
+						rotation += 360;
+					while (rotation > 360)
+						rotation -= 360;
+					gDerivedEditor.layers[idx].rotation = rotation;
+					SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_ROTATION), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].rotation);
+				}
+			}
+			else
+			{
+				gDerivedEditor.layers[idx].scale = min(300, max(10, gDerivedEditor.layers[idx].scale + step));
+				SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].scale);
+			}
+
 			CommitDerivedLayerValues(hWnd, FALSE);
 			return 0;
 		}
@@ -2813,6 +2896,7 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 				case IDC_DERIVED_EDIT_SCALE:
 				case IDC_DERIVED_EDIT_POSX:
 				case IDC_DERIVED_EDIT_POSY:
+				case IDC_DERIVED_EDIT_ROTATION:
 					if ((HIWORD(wParam) == EN_CHANGE) && !gDerivedEditor.syncingControls)
 						CommitDerivedLayerValues(hWnd, TRUE);
 					break;
@@ -2923,6 +3007,7 @@ static BOOL ShowDerivedIconEditor(HWND hParent, const PickerItem& baseItem, std:
 	baseLayer.scale = 100;
 	baseLayer.posX = 0;
 	baseLayer.posY = 0;
+	baseLayer.rotation = 0;
 	baseLayer.colorize = FALSE;
 	baseLayer.isBase = TRUE;
 	gDerivedEditor.layers.push_back(baseLayer);

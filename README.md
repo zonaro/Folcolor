@@ -19,6 +19,8 @@ Especially useful for programmers/developers, artists, power users, etc., that m
 2) Run Foldrion.exe and click the "Install" button (or Re-Install if already installed).
 3) Optionally click the "Import Icon" button to copy `.ico` and `.dll` files, or convert `.jpg` / `.jpeg` / `.png` images into `.ico` files inside the program `icons` folder.
 
+> A cool DLL icon pack to import is the [DLL Icons](https://github.com/simple-works/dll-icons) or [ICO DLL](https://github.com/Lifailon/ico-dll)
+
  
 
 </br>
