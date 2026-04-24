@@ -10,6 +10,65 @@ extern int iconOffsetGlobal;
 
 
 /**
+Desktop.ini-based folder verbs require the file to be stored as Unicode.
+Convert ANSI/UTF-8 desktop.ini files to UTF-16LE with BOM after updates.
+*/
+static void EnsureDesktopIniIsUnicode(LPCWSTR initPath)
+{
+	if (!initPath || !initPath[0])
+		return;
+
+	FILE* fp = NULL;
+	errno_t err = _wfopen_s(&fp, initPath, L"rb");
+	if ((err != 0) || !fp)
+		return;
+
+	long size = fsize(fp);
+	if (size <= 0)
+	{
+		fclose(fp);
+		return;
+	}
+
+	std::vector<BYTE> raw((size_t) size);
+	if (fread_s(raw.data(), raw.size(), raw.size(), 1, fp) != 1)
+	{
+		fclose(fp);
+		return;
+	}
+	fclose(fp);
+
+	if ((raw.size() >= 2) && (raw[0] == 0xFF) && (raw[1] == 0xFE))
+		return;
+
+	UINT codePage = CP_ACP;
+	size_t offset = 0;
+	if ((raw.size() >= 3) && (raw[0] == 0xEF) && (raw[1] == 0xBB) && (raw[2] == 0xBF))
+	{
+		codePage = CP_UTF8;
+		offset = 3;
+	}
+
+	int wideLen = MultiByteToWideChar(codePage, 0, (LPCCH) (raw.data() + offset), (int) (raw.size() - offset), NULL, 0);
+	if (wideLen <= 0)
+		return;
+
+	std::vector<WCHAR> wide((size_t) wideLen);
+	if (MultiByteToWideChar(codePage, 0, (LPCCH) (raw.data() + offset), (int) (raw.size() - offset), wide.data(), wideLen) <= 0)
+		return;
+
+	err = _wfopen_s(&fp, initPath, L"wb");
+	if ((err != 0) || !fp)
+		return;
+
+	const BYTE bom[2] = { 0xFF, 0xFE };
+	fwrite(bom, sizeof(bom), 1, fp);
+	fwrite(wide.data(), sizeof(WCHAR), wide.size(), fp);
+	fclose(fp);
+}
+
+
+/**
 Mark a folder desktop.ini as a Foldrion-customized folder type.
 This enables the shell to show Foldrion-only verbs for customized folders.
 */
@@ -116,6 +175,7 @@ static void RestoreFolderIcon(LPWSTR widePath)
 				WritePrivateProfileStringW(L".ShellClassInfo", L"IconIndex", NULL, initPath);
 				WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", NULL, initPath);
 				ClearFoldrionDirectoryClass(initPath);
+				EnsureDesktopIniIsUnicode(initPath);
 
 				// If there no fields left now in the ".ShellClassInfo" section remove it from the desktop.ini
 				WCHAR buffer[1024];
@@ -227,6 +287,7 @@ void SetFolderColor(int index, LPWSTR folderPath)
 			_snwprintf_s(iconPath, MAX_PATH, (MAX_PATH-1), L"%sFoldrion.exe,%d", myPathGlobal, (index + iconOffsetGlobal));
 			WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", iconPath, initPath);
 			SetFoldrionDirectoryClass(initPath);
+			EnsureDesktopIniIsUnicode(initPath);
 
 			// Flush icon cache so the new icon setting take effect eventually
 			PathMakeSystemFolderW(folderPath);
@@ -254,6 +315,7 @@ void SetFolderColor(int index, LPWSTR folderPath)
 		CRITICAL_API_FAIL(SHGetSetFolderCustomSettings, HRESULT_CODE(hr));
 
 	SetFoldrionDirectoryClass(initPath);
+	EnsureDesktopIniIsUnicode(initPath);
 }
 
 
@@ -332,6 +394,7 @@ void SetFolderIconResource(LPCWSTR iconResourcePath, int iconIndex, LPWSTR folde
 			// Write our "IconResource" entry
 			WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", iconResource, initPath);
 			SetFoldrionDirectoryClass(initPath);
+			EnsureDesktopIniIsUnicode(initPath);
 
 			// Flush icon cache so the new icon setting take effect eventually
 			PathMakeSystemFolderW(folderPath);
@@ -354,6 +417,7 @@ void SetFolderIconResource(LPCWSTR iconResourcePath, int iconIndex, LPWSTR folde
 		CRITICAL_API_FAIL(SHGetSetFolderCustomSettings, HRESULT_CODE(hr));
 
 	SetFoldrionDirectoryClass(initPath);
+	EnsureDesktopIniIsUnicode(initPath);
 }
 
 
