@@ -1,4 +1,4 @@
-// Folcolor(tm) (c) 2020 Kevin Weatherman
+// Foldrion(tm) (c) 2020 Kevin Weatherman
 // MIT license https://opensource.org/licenses/MIT
 #include "StdAfx.h"
 #include <versionhelpers.h>
@@ -14,7 +14,7 @@
 
 #pragma comment(lib, "Comdlg32.lib")
 
-#define APP_URL "http://www.folcolor.com/"
+#define APP_URL "http://www.foldrion.com/"
 
 static BOOL isInstalled = FALSE;
 static BOOL isRunningOutsideInstallFolder = FALSE;
@@ -2366,7 +2366,7 @@ static BOOL ShowDerivedIconEditor(HWND hParent, const PickerItem& baseItem, std:
 	WNDCLASSW wc = {};
 	wc.lpfnWndProc = DerivedIconEditorWndProc;
 	wc.hInstance = GetModuleHandleW(NULL);
-	wc.lpszClassName = L"FolcolorDerivedIconEditor";
+	wc.lpszClassName = L"FoldrionDerivedIconEditor";
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
 	wc.hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
 	wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
@@ -2817,7 +2817,7 @@ static int ShowFolderIconPicker(LPCWSTR folderPath)
 	WNDCLASSW wc = {};
 	wc.lpfnWndProc = PickerWndProc;
 	wc.hInstance = GetModuleHandleW(NULL);
-	wc.lpszClassName = L"FolcolorRuntimePicker";
+	wc.lpszClassName = L"FoldrionRuntimePicker";
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
 	wc.hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
 	wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);

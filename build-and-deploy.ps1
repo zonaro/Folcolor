@@ -1,11 +1,11 @@
 <#
 .SYNOPSIS
-Builds the Folcolor Release Win32 target and launches the generated executable.
+Builds the Foldrion Release Win32 target and launches the generated executable.
 
 .DESCRIPTION
 Resolves the project paths from the workspace root, finds MSBuild using common
 Visual Studio discovery mechanisms, rebuilds the Controller project in
-Release|Win32, and starts the generated Folcolor.exe.
+Release|Win32, and starts the generated Foldrion.exe.
 #>
 
 [CmdletBinding()]
@@ -47,23 +47,23 @@ function Get-MSBuildPath {
     throw 'MSBuild.exe nao foi encontrado. Instale o Visual Studio Build Tools ou ajuste o PATH.'
 }
 
-function Stop-FolcolorProcess {
+function Stop-FoldrionProcess {
     [CmdletBinding()]
     param()
 
-    $runningProcesses = Get-Process -Name 'Folcolor' -ErrorAction SilentlyContinue
+    $runningProcesses = Get-Process -Name 'Foldrion' -ErrorAction SilentlyContinue
     if (-not $runningProcesses) {
         return
     }
 
-    Write-Host '[CLEANUP] Encerrando instancias do Folcolor antes do build...' -ForegroundColor Yellow
+    Write-Host '[CLEANUP] Encerrando instancias do Foldrion antes do build...' -ForegroundColor Yellow
     $runningProcesses | Stop-Process -Force
 }
 
 try {
     $workspaceRoot = Split-Path -Parent $PSCommandPath
     $projectPath = Join-Path $workspaceRoot 'src\Controller\Controller.vcxproj'
-    $exePath = Join-Path $workspaceRoot 'src\Controller\Win32\Release\Folcolor.exe'
+    $exePath = Join-Path $workspaceRoot 'src\Controller\Win32\Release\Foldrion.exe'
     $buildTempPath = Join-Path $workspaceRoot '.build-temp'
     $msbuildPath = Get-MSBuildPath
 
@@ -80,7 +80,7 @@ try {
     $env:TEMP = $buildTempPath
     $env:TMP = $buildTempPath
 
-    Stop-FolcolorProcess
+    Stop-FoldrionProcess
 
     Write-Host '[BUILD] Compilando Release Win32...' -ForegroundColor Cyan
     & $msbuildPath $projectPath '/p:Configuration=Release' '/p:Platform=Win32' '/t:Rebuild' '/verbosity:minimal'
@@ -92,7 +92,7 @@ try {
         throw "Executavel nao encontrado em $exePath"
     }
 
-    Write-Host '[RUN] Iniciando Folcolor...' -ForegroundColor Green
+    Write-Host '[RUN] Iniciando Foldrion...' -ForegroundColor Green
     Start-Process -FilePath $exePath | Out-Null
     Write-Host '[OK] Build concluido e executavel iniciado.' -ForegroundColor Green
 }

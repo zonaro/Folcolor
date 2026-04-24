@@ -21,10 +21,10 @@
 
 #define APP_VERSION "1.2.0"  
 
-#define PROJECT_NAME "Folcolor"
-#define INSTALL_FOLDER L"Folcolor"
+#define PROJECT_NAME "Foldrion"
+#define INSTALL_FOLDER L"Foldrion"
 
-#define REGISTRY_PATH "Directory\\shell\\Folcolor"
+#define REGISTRY_PATH "Directory\\shell\\Foldrion"
 
 #define COMMAND_ICON "--index="
 #define COMMAND_RESOURCE "--resource="

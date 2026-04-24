@@ -2,7 +2,7 @@
     "version": "2.0.0",
     "tasks": [
         {
-            "label": "Folcolor: Build Release e Executar",
+            "label": "Foldrion: Build Release e Executar",
             "type": "shell",
             "command": "pwsh",
             "args": [

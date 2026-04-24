@@ -1,4 +1,4 @@
-// Folcolor(tm) (c) 2020 Kevin Weatherman
+// Foldrion(tm) (c) 2020 Kevin Weatherman
 // MIT license https://opensource.org/licenses/MIT
 #include "StdAfx.h"
 #include "resource.h"
@@ -1009,7 +1009,7 @@ static void InstallRegistry()
 if (!DeleteRegistryPath(HKEY_CLASSES_ROOT, REGISTRY_PATH))
 CRITICAL_API_FAIL(DeleteRegistryPath, GetLastError());
 
-// Root: HKEY_CLASSES_ROOT\Directory\shell\Folcolor
+// Root: HKEY_CLASSES_ROOT\Directory\shell\Foldrion
 HKEY rootKey = NULL;
 LSTATUS lStatus = RegCreateKeyExA(HKEY_CLASSES_ROOT, REGISTRY_PATH, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &rootKey, NULL);
 if (lStatus != ERROR_SUCCESS)

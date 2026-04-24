@@ -1,5 +1,5 @@
 
-// Folcolor(tm) (c) 2020 Kevin Weatherman
+// Foldrion(tm) (c) 2020 Kevin Weatherman
 // MIT license https://opensource.org/licenses/MIT
 #include "StdAfx.h"
 #include "resource.h"
@@ -192,7 +192,7 @@ void SetFolderColor(int index, LPWSTR folderPath)
 
 			// Write our "IconResource" entry
 			WCHAR iconPath[MAX_PATH];
-			_snwprintf_s(iconPath, MAX_PATH, (MAX_PATH-1), L"%sFolcolor.exe,%d", myPathGlobal, (index + iconOffsetGlobal));
+			_snwprintf_s(iconPath, MAX_PATH, (MAX_PATH-1), L"%sFoldrion.exe,%d", myPathGlobal, (index + iconOffsetGlobal));
 			WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", iconPath, initPath);
 
 			// Flush icon cache so the new icon setting take effect eventually
@@ -213,7 +213,7 @@ void SetFolderColor(int index, LPWSTR folderPath)
 	WCHAR iconPath[MAX_PATH];
 	pfcs.pszIconFile = iconPath;
 	pfcs.cchIconFile = MAX_PATH;
-	_snwprintf_s(iconPath, MAX_PATH, (MAX_PATH-1), L"%sFolcolor.exe", myPathGlobal);
+	_snwprintf_s(iconPath, MAX_PATH, (MAX_PATH-1), L"%sFoldrion.exe", myPathGlobal);
 	pfcs.iIconIndex = (index + iconOffsetGlobal);
 
 	HRESULT hr = SHGetSetFolderCustomSettings(&pfcs, folderPath, FCS_FORCEWRITE);
