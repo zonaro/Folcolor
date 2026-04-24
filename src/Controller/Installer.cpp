@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <wincodec.h>
 #include <tlhelp32.h>
+#include <shobjidl.h>
 
 #pragma comment(lib, "Comdlg32.lib")
 #pragma comment(lib, "Ole32.lib")
@@ -17,6 +18,16 @@
 
 extern WCHAR myPathGlobal[MAX_PATH];
 extern int iconOffsetGlobal;
+
+static InstallDiscoveryProgressCallback gInstallDiscoveryProgressCallback = NULL;
+static void* gInstallDiscoveryProgressUserData = NULL;
+
+
+void SetInstallDiscoveryProgressCallback(InstallDiscoveryProgressCallback callback, void* userData)
+{
+gInstallDiscoveryProgressCallback = callback;
+gInstallDiscoveryProgressUserData = userData;
+}
 
 
 // Icon index to color label
@@ -230,6 +241,147 @@ return std::wstring(myPathGlobal) + L"icons";
 
 
 /**
+ * Return the path to the cached Windows icon library list in the install folder.
+ */
+static std::wstring BuildSystemIconCachePath()
+{
+return std::wstring(myPathGlobal) + SYSTEM_ICON_CACHE_FILE;
+}
+
+
+/**
+ * Return the Windows root directory path (for example C:\\Windows).
+ */
+static std::wstring GetWindowsRootPath()
+{
+WCHAR windowsPath[MAX_PATH] = {};
+UINT len = GetWindowsDirectoryW(windowsPath, _countof(windowsPath));
+if ((len == 0) || (len >= _countof(windowsPath)))
+return std::wstring();
+
+std::wstring out = windowsPath;
+while (!out.empty() && ((out.back() == L'\\') || (out.back() == L'/')))
+out.pop_back();
+return out;
+}
+
+
+/**
+ * Return TRUE when the path extension is .dll or .exe.
+ */
+static BOOL IsDllOrExePath(const std::wstring& filePath)
+{
+LPCWSTR ext = PathFindExtensionW(filePath.c_str());
+if (!ext || !ext[0])
+return FALSE;
+
+return ((_wcsicmp(ext, L".dll") == 0) || (_wcsicmp(ext, L".exe") == 0));
+}
+
+
+/**
+ * Discover Windows DLL/EXE files that contain at least one icon.
+ */
+static void DiscoverSystemIconLibraryPaths(std::vector<std::wstring>& outPaths)
+{
+outPaths.clear();
+
+std::wstring windowsRoot = GetWindowsRootPath();
+if (windowsRoot.empty())
+return;
+
+std::vector<std::wstring> directories;
+directories.push_back(windowsRoot);
+
+while (!directories.empty())
+{
+std::wstring dirPath = directories.back();
+directories.pop_back();
+
+std::wstring pattern = dirPath + L"\\*";
+WIN32_FIND_DATAW fd = {};
+HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+if (hFind == INVALID_HANDLE_VALUE)
+continue;
+
+do
+{
+if ((wcscmp(fd.cFileName, L".") == 0) || (wcscmp(fd.cFileName, L"..") == 0))
+continue;
+
+std::wstring fullPath = dirPath + L"\\" + fd.cFileName;
+if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+{
+if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+directories.push_back(fullPath);
+continue;
+}
+
+if (!IsDllOrExePath(fullPath))
+continue;
+
+UINT iconCount = ExtractIconExW(fullPath.c_str(), -1, NULL, NULL, 0);
+if ((iconCount == UINT_MAX) || (iconCount == 0))
+continue;
+
+outPaths.push_back(fullPath);
+if (gInstallDiscoveryProgressCallback)
+gInstallDiscoveryProgressCallback(fullPath.c_str(), gInstallDiscoveryProgressUserData);
+}
+while (FindNextFileW(hFind, &fd));
+
+FindClose(hFind);
+}
+
+std::sort(outPaths.begin(), outPaths.end(), [](const std::wstring& left, const std::wstring& right)
+{
+LPCWSTR leftName = PathFindFileNameW(left.c_str());
+LPCWSTR rightName = PathFindFileNameW(right.c_str());
+int byName = _wcsicmp(leftName ? leftName : left.c_str(), rightName ? rightName : right.c_str());
+if (byName != 0)
+return (byName < 0);
+
+return (_wcsicmp(left.c_str(), right.c_str()) < 0);
+});
+}
+
+
+/**
+ * Persist discovered Windows icon library paths into the install cache file.
+ */
+static void WriteSystemIconCacheFile(const std::vector<std::wstring>& libraryPaths)
+{
+std::wstring cachePath = BuildSystemIconCachePath();
+FILE* fp = NULL;
+errno_t err = _wfopen_s(&fp, cachePath.c_str(), L"wt, ccs=UNICODE");
+if ((err != 0) || !fp)
+CRITICAL_API_ERRNO(_wfopen_s, err);
+
+for (size_t i = 0; i < libraryPaths.size(); i++)
+fwprintf(fp, L"%s\n", libraryPaths[i].c_str());
+
+fclose(fp);
+}
+
+
+/**
+ * Rebuild the Windows icon library cache used by the runtime picker.
+ */
+static void RebuildSystemIconCache()
+{
+std::vector<std::wstring> libraryPaths;
+DiscoverSystemIconLibraryPaths(libraryPaths);
+WriteSystemIconCacheFile(libraryPaths);
+}
+
+
+void RebuildSystemIconCacheOnly()
+{
+RebuildSystemIconCache();
+}
+
+
+/**
  * Return the file name portion of an absolute path.
  */
 static std::wstring FileNameFromPath(const std::wstring& fullPath)
@@ -287,6 +439,104 @@ if (ptr)
 ptr->Release();
 ptr = NULL;
 }
+}
+
+
+/**
+ * Build absolute path for the shared Start Menu shortcut.
+ */
+static std::wstring BuildCommonStartMenuShortcutPath()
+{
+PWSTR programsPath = NULL;
+HRESULT hr = SHGetKnownFolderPath(FOLDERID_CommonPrograms, KF_FLAG_DEFAULT, NULL, &programsPath);
+if (FAILED(hr))
+CRITICAL_API_FAIL(SHGetKnownFolderPath, hr);
+
+std::wstring linkPath = programsPath;
+CoTaskMemFree(programsPath);
+
+if (linkPath.empty())
+CRITICAL("Start Menu path could not be resolved.");
+
+if (linkPath.back() != L'\\')
+linkPath += L"\\";
+linkPath += L"Foldrion.lnk";
+return linkPath;
+}
+
+
+/**
+ * Create or overwrite the shared Start Menu shortcut for Foldrion.
+ */
+static void CreateStartMenuShortcut()
+{
+std::wstring exePath = BuildInstalledExePath();
+std::wstring linkPath = BuildCommonStartMenuShortcutPath();
+
+std::wstring workingDir = myPathGlobal;
+if (!workingDir.empty() && (workingDir.back() == L'\\'))
+workingDir.resize(workingDir.size() - 1);
+
+HRESULT hrInit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+BOOL shouldUninitialize = SUCCEEDED(hrInit);
+if ((hrInit != S_OK) && (hrInit != S_FALSE) && (hrInit != RPC_E_CHANGED_MODE))
+CRITICAL_API_FAIL(CoInitializeEx, hrInit);
+
+IShellLinkW* shellLink = NULL;
+IPersistFile* persistFile = NULL;
+
+HRESULT hr = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shellLink));
+if (FAILED(hr))
+CRITICAL_API_FAIL(CoCreateInstance, hr);
+
+hr = shellLink->SetPath(exePath.c_str());
+if (FAILED(hr))
+CRITICAL_API_FAIL(IShellLinkW_SetPath, hr);
+
+hr = shellLink->SetWorkingDirectory(workingDir.c_str());
+if (FAILED(hr))
+CRITICAL_API_FAIL(IShellLinkW_SetWorkingDirectory, hr);
+
+hr = shellLink->SetDescription(L"Foldrion");
+if (FAILED(hr))
+CRITICAL_API_FAIL(IShellLinkW_SetDescription, hr);
+
+hr = shellLink->SetIconLocation(exePath.c_str(), 0);
+if (FAILED(hr))
+CRITICAL_API_FAIL(IShellLinkW_SetIconLocation, hr);
+
+hr = shellLink->QueryInterface(IID_PPV_ARGS(&persistFile));
+if (FAILED(hr))
+CRITICAL_API_FAIL(IShellLinkW_QueryInterface, hr);
+
+hr = persistFile->Save(linkPath.c_str(), TRUE);
+if (FAILED(hr))
+CRITICAL_API_FAIL(IPersistFile_Save, hr);
+
+SafeRelease(persistFile);
+SafeRelease(shellLink);
+
+if (shouldUninitialize)
+CoUninitialize();
+
+SHChangeNotify(SHCNE_CREATE, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, linkPath.c_str(), NULL);
+}
+
+
+/**
+ * Remove the shared Start Menu shortcut for Foldrion if present.
+ */
+static void RemoveStartMenuShortcut()
+{
+std::wstring linkPath = BuildCommonStartMenuShortcutPath();
+if (!DeleteFileW(linkPath.c_str()))
+{
+DWORD gle = GetLastError();
+if ((gle != ERROR_FILE_NOT_FOUND) && (gle != ERROR_PATH_NOT_FOUND))
+CRITICAL_API_FAIL(DeleteFileW, gle);
+}
+
+SHChangeNotify(SHCNE_DELETE, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, linkPath.c_str(), NULL);
 }
 
 
@@ -1120,12 +1370,16 @@ if (gle != ERROR_ALREADY_EXISTS)
 CRITICAL_API_FAIL(CreateDirectoryW, gle);
 }
 
+RebuildSystemIconCache();
+
 // ------------------------------------------------------------------------
 
 // TODO: Put UAC trick stuff here
 
 
 // ------------------------------------------------------------------------
+
+CreateStartMenuShortcut();
 
 RefreshInstalledShellMenu();
 }
@@ -1137,6 +1391,8 @@ int Uninstall()
 {
 // Remove our registry key
 DeleteRegistryPath(HKEY_CLASSES_ROOT, REGISTRY_PATH);
+DeleteRegistryPath(HKEY_CLASSES_ROOT, FOLDER_PROGID);
+RemoveStartMenuShortcut();
 ResetWindowsIconCache();
 
 // Double check the path to avoid a disaster

@@ -23,6 +23,7 @@
 
 #define PROJECT_NAME "Foldrion"
 #define INSTALL_FOLDER L"Foldrion"
+#define SYSTEM_ICON_CACHE_FILE L"system-icon-cache.txt"
 
 #define REGISTRY_PATH "Directory\\shell\\Foldrion"
 #define FOLDER_PROGID "Foldrion.CustomFolder"
@@ -35,3 +36,7 @@
 
 BOOL ImportCustomIconFiles(HWND owner, UINT* copiedCount, UINT* convertedCount, UINT* failedCount, std::vector<std::wstring>* failedFiles);
 void RefreshInstalledShellMenu();
+
+typedef void (*InstallDiscoveryProgressCallback)(LPCWSTR foundLibraryPath, void* userData);
+void SetInstallDiscoveryProgressCallback(InstallDiscoveryProgressCallback callback, void* userData);
+void RebuildSystemIconCacheOnly();

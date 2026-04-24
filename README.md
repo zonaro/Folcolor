@@ -19,7 +19,7 @@ Especially useful for programmers/developers, artists, power users, etc., that m
 2) Run Foldrion.exe and click the "Install" button (or Re-Install if already installed).
 3) Optionally click the "Import Icon" button to copy `.ico` and `.dll` files, or convert `.jpg` / `.jpeg` / `.png` images into `.ico` files inside the program `icons` folder.
 
-> A cool DLL icon pack to import is the [DLL Icons](https://github.com/simple-works/dll-icons) or [ICO DLL](https://github.com/Lifailon/ico-dll)
+> A cool DLL icon packs to import are [DLL Icons](https://github.com/simple-works/dll-icons) and [ICO DLL](https://github.com/Lifailon/ico-dll)
 
  
 
@@ -32,6 +32,7 @@ Now installed, simply right click on a folder, select "Customize Folder", search
 * Import your own icons from `.ico`, `.dll`, `.jpg`, `.jpeg`, and `.png` files.
 * Create your own custom icon packs by adding files to the `icons` folder in the installation directory.  
 * Create derived icons by applying a image over a colored folder icon. For example, you can create a "Red Folder with Star" icon by applying a star image over the red folder icon.
+* Create your own DLL icon packs directly from the program by selecting many `.ico`, `.png` or `.jpg` files and exporting them as a single `.dll` file.
 * 100% Free Open Source. You can known what it's made of and freely modify, remove, or add features to it.  
 * Minimalist, systems-level designed. Consists of a single executable with an embedded icons resource.  
 * Secure design: Absolute minimal API usage, using zero network calls. No adware, no nag screens, data collection, and doesn't use a vulnerable Explorer shell extension like others do.  

@@ -1,4 +1,4 @@
-// Foldrion(tm) (c) 2020 Kevin Weatherman
+﻿// Foldrion(tm) (c) 2020 Kevin Weatherman
 // MIT license https://opensource.org/licenses/MIT
 #include "StdAfx.h"
 #include <versionhelpers.h>
@@ -23,6 +23,7 @@ int iconOffsetGlobal = WIN7_ICON_OFFSET;
 extern void Install();
 extern int Uninstall();
 extern BOOL HasInstallRegistry();
+extern void RebuildSystemIconCacheOnly();
 
 // ntdll.lib
 typedef long NTSTATUS;
@@ -150,7 +151,23 @@ static BOOL AreSamePath(LPCWSTR leftPath, LPCWSTR rightPath)
  */
 static void UpdateInstallDependentControls(HWND hWnd)
 {
-	EnableWindow(GetDlgItem(hWnd, IDC_REINSTALL), (isInstalled && isRunningOutsideInstallFolder));
+	HWND hReinstall = GetDlgItem(hWnd, IDC_REINSTALL);
+	if (!hReinstall)
+		return;
+
+	if (!isInstalled)
+	{
+		SetWindowTextA(hReinstall, "Re-install");
+		EnableWindow(hReinstall, FALSE);
+		return;
+	}
+
+	if (isRunningOutsideInstallFolder)
+		SetWindowTextA(hReinstall, "Re-install");
+	else
+		SetWindowTextA(hReinstall, "Re-scan Icons");
+
+	EnableWindow(hReinstall, TRUE);
 }
 
 /**
@@ -234,26 +251,6 @@ struct PickerCategory
 	std::vector<PickerItem> items;
 };
 
-
-struct SystemCategoryEntry
-{
-	LPCWSTR envPath;
-	LPCWSTR label;
-};
-
-static const SystemCategoryEntry kSystemDlls[] =
-{
-	{ L"%SystemRoot%\\System32\\imageres.dll", L"Windows Icon Library (imageres.dll)" },
-	{ L"%SystemRoot%\\System32\\shell32.dll", L"Windows Shell Core (shell32.dll)" },
-	{ L"%SystemRoot%\\System32\\pifmgr.dll", L"Legacy Program Icons (pifmgr.dll)" },
-	{ L"%SystemRoot%\\System32\\ddores.dll", L"Device Category Resources (ddores.dll)" },
-	{ L"%SystemRoot%\\System32\\accessibilitycpl.dll", L"Ease of Access (accessibilitycpl.dll)" },
-	{ L"%SystemRoot%\\System32\\mmres.dll", L"Audio Resources (mmres.dll)" },
-	{ L"%SystemRoot%\\System32\\netshell.dll", L"Network Connections (netshell.dll)" },
-	{ L"%SystemRoot%\\explorer.exe", L"File Explorer Shell (explorer.exe)" },
-	{ L"%SystemRoot%\\System32\\wmploc.dll", L"Media Player Resources (wmploc.dll)" },
-};
-
 static std::vector<PickerCategory> gPickerCategories;
 struct PickerVisibleItem
 {
@@ -293,8 +290,8 @@ enum PickerColorCategoryIndex
 /** Large icon displayed in the preview box. */
 static HICON gPickerPreviewIcon      = NULL;
 static BOOL  gPickerPreviewOwnsIcon  = FALSE;
-static BOOL  gPickerPreviewIsFolder  = FALSE; // TRUE when showing the folder's current icon
-static BOOL  gPickerPreviewIsDefault = FALSE; // TRUE when showing the OS default folder icon (no custom icon set)
+static BOOL  gPickerPreviewIsFolder  = FALSE;
+static BOOL  gPickerPreviewIsDefault = FALSE;
 
 // Derived icon editor controls.
 #define IDC_DERIVED_PREVIEW 3001
@@ -783,15 +780,54 @@ static void RebuildPickerVisibleItems(int categoryIndex)
 
 
 /**
- * Expand environment variables in a path.
+ * Return the path to the cached Windows icon library list in the install folder.
  */
-static std::wstring ExpandEnvPath(LPCWSTR envPath)
+static std::wstring BuildSystemIconCachePath()
 {
-	WCHAR expanded[MAX_PATH * 2] = {};
-	DWORD len = ExpandEnvironmentStringsW(envPath, expanded, _countof(expanded));
-	if ((len == 0) || (len > _countof(expanded)))
-		return std::wstring();
-	return std::wstring(expanded);
+	return std::wstring(myPathGlobal) + SYSTEM_ICON_CACHE_FILE;
+}
+
+
+/**
+ * Read cached Windows icon library paths generated during install/reinstall.
+ */
+static void LoadCachedSystemIconLibraryPaths(std::vector<std::wstring>& outPaths)
+{
+	outPaths.clear();
+	std::wstring cachePath = BuildSystemIconCachePath();
+
+	FILE* fp = NULL;
+	errno_t err = _wfopen_s(&fp, cachePath.c_str(), L"rt, ccs=UNICODE");
+	if ((err != 0) || !fp)
+		return;
+
+	WCHAR buffer[4096] = {};
+	while (fgetws(buffer, _countof(buffer), fp) != NULL)
+	{
+		std::wstring line = buffer;
+		while (!line.empty() && ((line.back() == L'\r') || (line.back() == L'\n') || (line.back() == L' ') || (line.back() == L'\t')))
+			line.pop_back();
+		while (!line.empty() && ((line[0] == L' ') || (line[0] == L'\t')))
+			line.erase(line.begin());
+
+		if (!line.empty())
+			outPaths.push_back(line);
+	}
+
+	fclose(fp);
+}
+
+
+/**
+ * Build picker category label using only the DLL/EXE file name.
+ */
+static std::wstring BuildCachedSystemIconCategoryLabel(const std::wstring& filePath)
+{
+	LPCWSTR fileName = PathFindFileNameW(filePath.c_str());
+	if (fileName && fileName[0])
+		return std::wstring(L"Windows - ") + fileName;
+
+	return std::wstring(L"Windows - ") + filePath;
 }
 
 
@@ -857,6 +893,38 @@ static void AddDllCategory(std::vector<PickerCategory>& out, const std::wstring&
 		return;
 
 	UINT iconCount = ExtractIconExW(filePath.c_str(), -1, NULL, NULL, 0);
+	if ((iconCount == UINT_MAX) || (iconCount == 0))
+		return;
+
+	PickerCategory cat;
+	cat.name = categoryName;
+	for (UINT i = 0; i < iconCount; i++)
+	{
+		WCHAR label[64];
+		swprintf_s(label, _countof(label), L"Icon %03u", i);
+
+		PickerItem item = {};
+		item.isBuiltIn = FALSE;
+		item.builtInIndex = -1;
+		item.builtInOffset = 0;
+		item.resourcePath = filePath;
+		item.resourceIndex = (int) i;
+		item.label = label;
+		item.cachedIcon = NULL;
+		item.ownsCachedIcon = FALSE;
+		cat.items.push_back(item);
+	}
+
+	out.push_back(cat);
+}
+
+
+/**
+ * Add one DLL/EXE category using a known icon count from discovery cache.
+ */
+static void AddDllCategoryWithKnownIconCount(std::vector<PickerCategory>& out, const std::wstring& categoryName,
+	const std::wstring& filePath, UINT iconCount)
+{
 	if ((iconCount == UINT_MAX) || (iconCount == 0))
 		return;
 
@@ -1004,11 +1072,21 @@ static void BuildPickerCategories(std::vector<PickerCategory>& out)
 	AddColorsCategory(out, L"Windows 10 Colored", WIN10_ICON_OFFSET);
 	AddColorsCategory(out, L"Windows 7/8 Colored", WIN7_ICON_OFFSET);
 
-	for (UINT i = 0; i < _countof(kSystemDlls); i++)
+	std::vector<std::wstring> cachedSystemLibraries;
+	LoadCachedSystemIconLibraryPaths(cachedSystemLibraries);
+	std::vector<std::wstring> seenSystemLibraryNames;
+	for (size_t i = 0; i < cachedSystemLibraries.size(); i++)
 	{
-		std::wstring path = ExpandEnvPath(kSystemDlls[i].envPath);
-		if (!path.empty())
-			AddDllCategory(out, kSystemDlls[i].label, path);
+		LPCWSTR fileName = PathFindFileNameW(cachedSystemLibraries[i].c_str());
+		if (!fileName || !fileName[0])
+			continue;
+
+		std::wstring normalizedName = ToLowerCopy(fileName);
+		if (std::find(seenSystemLibraryNames.begin(), seenSystemLibraryNames.end(), normalizedName) != seenSystemLibraryNames.end())
+			continue;
+
+		seenSystemLibraryNames.push_back(normalizedName);
+		AddDllCategory(out, BuildCachedSystemIconCategoryLabel(cachedSystemLibraries[i]), cachedSystemLibraries[i]);
 	}
 
 	std::wstring iconsRoot = std::wstring(myPathGlobal) + L"icons";
@@ -3931,6 +4009,685 @@ static LRESULT CALLBACK HypLinkSubclass(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
 
 
 // Our dialog Window message handler
+/**
+ * Build GRPICONDIR blob and populate RT_ICON resources for one ICO file blob.
+ * Returns the number of icon images successfully added; 0 on failure.
+ * nextIconId is incremented for each image entry consumed.
+ */
+static UINT PackOneIcoGroup(HANDLE hUpdate, WORD groupId,
+	const std::vector<BYTE>& icoData, WORD& nextIconId, std::vector<BYTE>& groupData)
+{
+	groupData.clear();
+	if (icoData.size() < 6)
+		return 0;
+
+	WORD idType  = *reinterpret_cast<const WORD*>(&icoData[2]);
+	if (idType != 1)
+		return 0;
+
+	WORD idCount = *reinterpret_cast<const WORD*>(&icoData[4]);
+	if ((idCount == 0) || (icoData.size() < (size_t)(6 + (size_t)idCount * 16)))
+		return 0;
+
+	std::vector<BYTE> grpEntries;
+	UINT added = 0;
+
+	for (WORD i = 0; i < idCount; i++)
+	{
+		size_t off         = 6 + (size_t)i * 16;
+		DWORD dwBytesInRes  = *reinterpret_cast<const DWORD*>(&icoData[off + 8]);
+		DWORD dwImageOffset = *reinterpret_cast<const DWORD*>(&icoData[off + 12]);
+
+		if (((size_t)dwImageOffset + (size_t)dwBytesInRes) > icoData.size())
+			continue;
+
+		WORD iconId = nextIconId++;
+		if (!UpdateResourceW(hUpdate, (LPCWSTR)RT_ICON, MAKEINTRESOURCEW(iconId),
+			MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+			const_cast<BYTE*>(&icoData[dwImageOffset]), dwBytesInRes))
+		{
+			continue;
+		}
+
+		// GRPICONDIRENTRY (14 bytes): same as ICONDIRENTRY but last field is WORD nId
+		BYTE entry[14] = {};
+		entry[0] = icoData[off + 0];
+		entry[1] = icoData[off + 1];
+		entry[2] = icoData[off + 2];
+		entry[3] = icoData[off + 3];
+		memcpy(entry + 4,  &icoData[off + 4], 2); // wPlanes
+		memcpy(entry + 6,  &icoData[off + 6], 2); // wBitCount
+		memcpy(entry + 8,  &dwBytesInRes,     4); // dwBytesInRes
+		memcpy(entry + 12, &iconId,           2); // nId
+		grpEntries.insert(grpEntries.end(), entry, entry + 14);
+		added++;
+	}
+
+	if (added == 0)
+		return 0;
+
+	// GRPICONDIR header: WORD reserved=0, WORD type=1, WORD count
+	groupData.resize(6 + grpEntries.size());
+	WORD zero = 0, one = 1, count = (WORD)added;
+	memcpy(&groupData[0], &zero,  2);
+	memcpy(&groupData[2], &one,   2);
+	memcpy(&groupData[4], &count, 2);
+	memcpy(&groupData[6], grpEntries.data(), grpEntries.size());
+	return added;
+}
+
+
+/**
+ * Read a file from disk into a byte vector.
+ */
+static BOOL ReadFileIntoVector(LPCWSTR filePath, std::vector<BYTE>& data)
+{
+	data.clear();
+	HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
+		OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE)
+		return FALSE;
+
+	DWORD fileSize = GetFileSize(hFile, NULL);
+	BOOL ok = FALSE;
+	if ((fileSize > 0) && (fileSize != INVALID_FILE_SIZE))
+	{
+		data.resize(fileSize);
+		DWORD bytesRead = 0;
+		ok = ReadFile(hFile, data.data(), fileSize, &bytesRead, NULL) && (bytesRead == fileSize);
+		if (!ok)
+			data.clear();
+	}
+	CloseHandle(hFile);
+	return ok;
+}
+
+
+/**
+ * Fit BGRA pixels of any dimension into a transparent 256x256 square canvas
+ * using proportional scaling (letterbox).
+ */
+static std::vector<BYTE> LetterboxTo256(const std::vector<BYTE>& pixels, UINT srcW, UINT srcH)
+{
+	std::vector<BYTE> canvas(256 * 256 * 4, 0);
+	if ((srcW == 0) || (srcH == 0))
+		return canvas;
+
+	double scaleX = 256.0 / (double)srcW;
+	double scaleY = 256.0 / (double)srcH;
+	double scale  = (scaleX < scaleY) ? scaleX : scaleY;
+	UINT drawW    = (UINT)((double)srcW * scale + 0.5);
+	UINT drawH    = (UINT)((double)srcH * scale + 0.5);
+	if (drawW > 256) drawW = 256;
+	if (drawH > 256) drawH = 256;
+	UINT offX = (256 - drawW) / 2;
+	UINT offY = (256 - drawH) / 2;
+
+	for (UINT y = 0; y < drawH; y++)
+	{
+		UINT sy = (UINT)((double)y / scale);
+		if (sy >= srcH) sy = srcH - 1;
+		for (UINT x = 0; x < drawW; x++)
+		{
+			UINT sx = (UINT)((double)x / scale);
+			if (sx >= srcW) sx = srcW - 1;
+			const BYTE* src = &pixels[((size_t)sy * srcW + sx) * 4];
+			BYTE* dst = &canvas[((size_t)(offY + y) * 256 + (offX + x)) * 4];
+			dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3];
+		}
+	}
+	return canvas;
+}
+
+
+/**
+ * Ask the user for a DLL file name and normalize it to a safe *.dll name.
+ * Returns FALSE when the user cancels.
+ */
+static BOOL PromptPackageDllName(HWND hWnd, const std::wstring& initialDir, std::wstring& outFileName)
+{
+	outFileName.clear();
+
+	WCHAR fileName[MAX_PATH] = L"PackagedIcons.dll";
+	static const WCHAR kDllFilter[] =
+		L"DLL files (*.dll)\0*.dll\0"
+		L"All files (*.*)\0*.*\0\0";
+
+	OPENFILENAMEW sfn = {};
+	sfn.lStructSize = sizeof(sfn);
+	sfn.hwndOwner = hWnd;
+	sfn.lpstrFilter = kDllFilter;
+	sfn.lpstrFile = fileName;
+	sfn.nMaxFile = _countof(fileName);
+	sfn.lpstrInitialDir = initialDir.c_str();
+	sfn.lpstrTitle = L"Choose output DLL name";
+	sfn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
+	sfn.lpstrDefExt = L"dll";
+
+	if (!GetSaveFileNameW(&sfn))
+		return FALSE;
+
+	std::wstring chosenName = PathFindFileNameW(fileName);
+	chosenName = TrimWhitespaceCopy(chosenName);
+	if (chosenName.empty())
+		chosenName = L"PackagedIcons.dll";
+
+	LPCWSTR ext = PathFindExtensionW(chosenName.c_str());
+	if (!(ext && (ext[0] != L'\0') && (_wcsicmp(ext, L".dll") == 0)))
+		chosenName = RemoveExtensionCopy(chosenName) + L".dll";
+
+	outFileName = chosenName;
+	return TRUE;
+}
+
+
+/**
+ * Package selected .ico/.png/.jpg files into a single DLL that exposes each
+ * icon as an RT_GROUP_ICON resource, compatible with ExtractIconExW.
+ * The DLL is saved to the icons subfolder when installed, or to the exe
+ * directory when running standalone.
+ */
+static void PackageIconsIntoDll(HWND hWnd)
+{
+	static const WCHAR kFilter[] =
+		L"Icon files (*.ico;*.png;*.jpg;*.jpeg)\0*.ico;*.png;*.jpg;*.jpeg\0"
+		L"ICO files (*.ico)\0*.ico\0"
+		L"Image files (*.png;*.jpg;*.jpeg)\0*.png;*.jpg;*.jpeg\0\0";
+
+	std::vector<WCHAR> fileBuffer(32768, L'\0');
+	OPENFILENAMEW ofn = {};
+	ofn.lStructSize = sizeof(ofn);
+	ofn.hwndOwner   = hWnd;
+	ofn.lpstrFilter = kFilter;
+	ofn.lpstrFile   = fileBuffer.data();
+	ofn.nMaxFile    = (DWORD)fileBuffer.size();
+	ofn.Flags       = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_ALLOWMULTISELECT;
+	ofn.lpstrTitle  = L"Select icons to package into DLL";
+	if (!GetOpenFileNameW(&ofn))
+		return;
+
+	// Parse multi-select results (directory + file names, or single full path)
+	std::vector<std::wstring> selectedPaths;
+	const WCHAR* ptr = fileBuffer.data();
+	std::wstring dirOrSingle = ptr;
+	ptr += dirOrSingle.size() + 1;
+
+	if (*ptr == L'\0')
+	{
+		selectedPaths.push_back(dirOrSingle);
+	}
+	else
+	{
+		while (*ptr)
+		{
+			std::wstring name = ptr;
+			selectedPaths.push_back(dirOrSingle + L"\\" + name);
+			ptr += name.size() + 1;
+		}
+	}
+
+	if (selectedPaths.empty())
+		return;
+
+	// Determine output directory
+	std::wstring iconsDir;
+	if (isInstalled)
+	{
+		iconsDir = std::wstring(myPathGlobal) + L"icons";
+	}
+	else
+	{
+		WCHAR exeDir[MAX_PATH] = {};
+		if (GetModuleFileNameW(NULL, exeDir, _countof(exeDir)))
+		{
+			WCHAR* lastSlash = wcsrchr(exeDir, L'\\');
+			if (lastSlash)
+				*lastSlash = L'\0';
+		}
+		iconsDir = exeDir;
+	}
+
+	if (!EnsureDirectoryExists(iconsDir.c_str()))
+	{
+		MessageBoxA(hWnd, "Unable to create target directory.", "Error:", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	std::wstring requestedDllName;
+	if (!PromptPackageDllName(hWnd, iconsDir, requestedDllName))
+		return;
+
+	std::wstring dllPath = MakeUniqueDestinationPathMain(iconsDir, requestedDllName);
+	if (dllPath.empty())
+	{
+		MessageBoxA(hWnd, "Unable to build output DLL path.", "Error:", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	// Copy current exe as a valid PE stub (BeginUpdateResource requires an existing PE)
+	WCHAR exePath[MAX_PATH] = {};
+	if (!GetModuleFileNameW(NULL, exePath, _countof(exePath)))
+	{
+		MessageBoxA(hWnd, "Unable to get executable path.", "Error:", MB_OK | MB_ICONERROR);
+		return;
+	}
+	if (!CopyFileW(exePath, dllPath.c_str(), FALSE))
+	{
+		MessageBoxA(hWnd, "Unable to create DLL output file.", "Error:", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	// Open PE for resource update, clearing all existing resources
+	HANDLE hUpdate = BeginUpdateResourceW(dllPath.c_str(), TRUE);
+	if (!hUpdate)
+	{
+		DeleteFileW(dllPath.c_str());
+		MessageBoxA(hWnd, "Unable to begin resource update on DLL.", "Error:", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	WORD nextIconId   = 1;
+	WORD nextGroupId  = 1;
+	UINT successCount = 0;
+	UINT failedCount  = 0;
+	std::vector<std::wstring> failedNames;
+
+	for (size_t i = 0; i < selectedPaths.size(); i++)
+	{
+		const std::wstring& srcPath = selectedPaths[i];
+		LPCWSTR ext = PathFindExtensionW(srcPath.c_str());
+		std::vector<BYTE> icoData;
+
+		if (ext && (_wcsicmp(ext, L".ico") == 0))
+		{
+			ReadFileIntoVector(srcPath.c_str(), icoData);
+		}
+		else
+		{
+			// Load image via WIC, convert to 256x256 BGRA, then write multi-size ICO
+			std::vector<BYTE> pixels;
+			UINT imgW = 0, imgH = 0;
+			if (FAILED(LoadImageFileAsBgra(srcPath.c_str(), pixels, imgW, imgH)))
+			{
+				failedCount++;
+				failedNames.push_back(PathFindFileNameW(srcPath.c_str()));
+				continue;
+			}
+
+			std::vector<BYTE> pixels256;
+			if ((imgW == 256) && (imgH == 256))
+				pixels256 = pixels;
+			else if ((imgW == imgH) && (imgW > 0))
+				pixels256 = ResizeSquareNearest(pixels, imgW, 256);
+			else
+				pixels256 = LetterboxTo256(pixels, imgW, imgH);
+
+			// Write ICO to temp file, read back bytes, then delete
+			WCHAR tempDir[MAX_PATH] = {};
+			WCHAR tempPath[MAX_PATH] = {};
+			GetTempPathW(_countof(tempDir), tempDir);
+			GetTempFileNameW(tempDir, L"fic", 0, tempPath);
+
+			BOOL icoOk = SUCCEEDED(WriteMultiSizePngIcoFile(tempPath, pixels256));
+			if (icoOk)
+				icoOk = ReadFileIntoVector(tempPath, icoData);
+			DeleteFileW(tempPath);
+
+			if (!icoOk || icoData.empty())
+			{
+				failedCount++;
+				failedNames.push_back(PathFindFileNameW(srcPath.c_str()));
+				continue;
+			}
+		}
+
+		if (icoData.empty())
+		{
+			failedCount++;
+			failedNames.push_back(PathFindFileNameW(srcPath.c_str()));
+			continue;
+		}
+
+		std::vector<BYTE> groupData;
+		UINT added = PackOneIcoGroup(hUpdate, nextGroupId, icoData, nextIconId, groupData);
+		if ((added == 0) || groupData.empty())
+		{
+			failedCount++;
+			failedNames.push_back(PathFindFileNameW(srcPath.c_str()));
+			continue;
+		}
+
+		if (!UpdateResourceW(hUpdate, (LPCWSTR)RT_GROUP_ICON, MAKEINTRESOURCEW(nextGroupId),
+			MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+			groupData.data(), (DWORD)groupData.size()))
+		{
+			failedCount++;
+			failedNames.push_back(PathFindFileNameW(srcPath.c_str()));
+			continue;
+		}
+
+		nextGroupId++;
+		successCount++;
+	}
+
+	// Commit changes (or discard if nothing was added)
+	BOOL bDiscard = (successCount == 0) ? TRUE : FALSE;
+	if (!EndUpdateResourceW(hUpdate, bDiscard))
+	{
+		DeleteFileW(dllPath.c_str());
+		MessageBoxA(hWnd, "Unable to finalize DLL resources.", "Error:", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	if (successCount == 0)
+	{
+		DeleteFileW(dllPath.c_str());
+		MessageBoxA(hWnd, "No icons were successfully packaged.", "Error:", MB_OK | MB_ICONERROR);
+		return;
+	}
+
+	if (isInstalled)
+		RefreshInstalledShellMenu();
+
+	char msg[1024] = {};
+	sprintf_s(msg, sizeof(msg), "Packaged %u icon(s) into:\n%S", successCount, dllPath.c_str());
+	AppendFailedImportList(msg, sizeof(msg), failedNames);
+	MessageBoxA(hWnd, msg, "Package Icons:", MB_OK | (failedCount ? MB_ICONWARNING : MB_ICONASTERISK));
+}
+
+
+/** Thread payload used while running Install() with UI progress. */
+struct InstallProgressContext
+{
+	HANDLE doneEvent;
+	BOOL cacheOnlyMode;
+};
+
+#define IDC_INSTALL_PROGRESS_BAR 5101
+#define IDC_INSTALL_PROGRESS_FOUND_ITEM 5102
+#define INSTALL_PROGRESS_TIMER_ID 1
+#define WM_INSTALL_PROGRESS_FOUND_LIBRARY (WM_APP + 140)
+
+
+/** Worker thread: execute Install() and signal completion event. */
+static DWORD WINAPI InstallWithProgressThreadProc(LPVOID parameter)
+{
+	InstallProgressContext* ctx = (InstallProgressContext*) parameter;
+	if (ctx && ctx->cacheOnlyMode)
+		RebuildSystemIconCacheOnly();
+	else
+		Install();
+	if (ctx && ctx->doneEvent)
+		SetEvent(ctx->doneEvent);
+	return 0;
+}
+
+
+/** Relay installer discovery progress from worker thread to progress window UI thread. */
+static void InstallDiscoveryProgressRelayCallback(LPCWSTR foundLibraryPath, void* userData)
+{
+	HWND hProgressWnd = (HWND) userData;
+	if (!hProgressWnd || !IsWindow(hProgressWnd) || !foundLibraryPath || !foundLibraryPath[0])
+		return;
+
+	size_t cch = wcslen(foundLibraryPath) + 1;
+	WCHAR* copy = (WCHAR*) LocalAlloc(LMEM_FIXED, cch * sizeof(WCHAR));
+	if (!copy)
+		return;
+
+	wcscpy_s(copy, cch, foundLibraryPath);
+	if (!PostMessageW(hProgressWnd, WM_INSTALL_PROGRESS_FOUND_LIBRARY, 0, (LPARAM) copy))
+		LocalFree(copy);
+}
+
+
+/** Keep a borderless progress window painted with dialog-like colors. */
+static LRESULT CALLBACK InstallProgressWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (uMsg)
+	{
+		case WM_TIMER:
+			if (wParam == INSTALL_PROGRESS_TIMER_ID)
+			{
+				HWND hProgressBar = GetDlgItem(hWnd, IDC_INSTALL_PROGRESS_BAR);
+				if (hProgressBar)
+				{
+					int pos = (int) SendMessageW(hProgressBar, PBM_GETPOS, 0, 0);
+					int nextPos = (pos + 1) % 101;
+					SendMessageW(hProgressBar, PBM_SETPOS, nextPos, 0);
+				}
+				return 0;
+			}
+			break;
+
+		case WM_INSTALL_PROGRESS_FOUND_LIBRARY:
+		{
+			WCHAR* fullPath = (WCHAR*) lParam;
+			if (!fullPath)
+				return 0;
+
+			LPCWSTR fileName = PathFindFileNameW(fullPath);
+			if (!fileName || !fileName[0])
+				fileName = fullPath;
+
+			WCHAR label[384] = {};
+			swprintf_s(label, _countof(label), L"Found: %s", fileName);
+			SetDlgItemTextW(hWnd, IDC_INSTALL_PROGRESS_FOUND_ITEM, label);
+
+			HWND hProgressBar = GetDlgItem(hWnd, IDC_INSTALL_PROGRESS_BAR);
+			if (hProgressBar)
+			{
+				int pos = (int) SendMessageW(hProgressBar, PBM_GETPOS, 0, 0);
+				int nextPos = (pos + 2) % 101;
+				SendMessageW(hProgressBar, PBM_SETPOS, nextPos, 0);
+			}
+
+			LocalFree(fullPath);
+			return 0;
+		}
+
+		case WM_ERASEBKGND:
+		{
+			RECT rc = {};
+			GetClientRect(hWnd, &rc);
+			HBRUSH brush = gDialogBackgroundBrush ? gDialogBackgroundBrush : GetSysColorBrush(COLOR_WINDOW);
+			FillRect((HDC) wParam, &rc, brush);
+			return 1;
+		}
+
+		case WM_CTLCOLORSTATIC:
+		{
+			HDC hdc = (HDC) wParam;
+			SetTextColor(hdc, gDialogTextColor);
+			SetBkColor(hdc, gDialogBackgroundColor);
+			return (LRESULT) (gDialogBackgroundBrush ? gDialogBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+		}
+
+		case WM_DESTROY:
+			KillTimer(hWnd, INSTALL_PROGRESS_TIMER_ID);
+			break;
+	}
+
+	return DefWindowProcW(hWnd, uMsg, wParam, lParam);
+}
+
+
+/** Center a popup window relative to the owner dialog. */
+static void CenterPopupToOwner(HWND hPopup, HWND hOwner)
+{
+	RECT ownerRc = {};
+	RECT popupRc = {};
+	GetWindowRect(hOwner, &ownerRc);
+	GetWindowRect(hPopup, &popupRc);
+
+	int popupW = popupRc.right - popupRc.left;
+	int popupH = popupRc.bottom - popupRc.top;
+	int x = ownerRc.left + ((ownerRc.right - ownerRc.left - popupW) / 2);
+	int y = ownerRc.top + ((ownerRc.bottom - ownerRc.top - popupH) / 2);
+
+	SetWindowPos(hPopup, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+}
+
+
+/** Run Install() while displaying a borderless marquee progress window. */
+static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, BOOL cacheOnlyMode)
+{
+	INITCOMMONCONTROLSEX icc = {};
+	icc.dwSize = sizeof(icc);
+	icc.dwICC = ICC_PROGRESS_CLASS;
+	InitCommonControlsEx(&icc);
+
+	static ATOM progressWndClassAtom = 0;
+	if (!progressWndClassAtom)
+	{
+		WNDCLASSW wc = {};
+		wc.lpfnWndProc = InstallProgressWndProc;
+		wc.hInstance = (HINSTANCE) GetModuleHandleW(NULL);
+		wc.lpszClassName = L"FoldrionInstallProgressWnd";
+		wc.hCursor = LoadCursor(NULL, IDC_WAIT);
+		wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+		progressWndClassAtom = RegisterClassW(&wc);
+	}
+
+	HWND hProgressWnd = CreateWindowExW(
+		WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+		L"FoldrionInstallProgressWnd",
+		L"",
+		WS_POPUP,
+		CW_USEDEFAULT,
+		CW_USEDEFAULT,
+		420,
+		138,
+		hWnd,
+		NULL,
+		(HINSTANCE) GetModuleHandleW(NULL),
+		NULL);
+
+	if (!hProgressWnd)
+	{
+		if (cacheOnlyMode)
+			RebuildSystemIconCacheOnly();
+		else
+			Install();
+		return;
+	}
+
+	CreateWindowW(
+		L"STATIC",
+		cacheOnlyMode ? L"Re-scanning icons, please wait..." : (isReinstallOperation ? L"Re-installing, please wait..." : L"Installing, please wait..."),
+		WS_CHILD | WS_VISIBLE | SS_CENTER,
+		20,
+		18,
+		380,
+		22,
+		hProgressWnd,
+		NULL,
+		NULL,
+		NULL);
+
+	HWND hProgressBar = CreateWindowExW(
+		0,
+		PROGRESS_CLASSW,
+		L"",
+		WS_CHILD | WS_VISIBLE | PBS_SMOOTH | PBS_MARQUEE,
+		28,
+		56,
+		364,
+		20,
+		hProgressWnd,
+		(HMENU) IDC_INSTALL_PROGRESS_BAR,
+		NULL,
+		NULL);
+
+	if (hProgressBar)
+	{
+		SendMessageW(hProgressBar, PBM_SETRANGE32, 0, 100);
+		SendMessageW(hProgressBar, PBM_SETPOS, 0, 0);
+		SendMessageW(hProgressBar, PBM_SETMARQUEE, TRUE, 30);
+	}
+
+	CreateWindowW(
+		L"STATIC",
+		L"Found: waiting...",
+		WS_CHILD | WS_VISIBLE | SS_CENTER,
+		18,
+		86,
+		384,
+		24,
+		hProgressWnd,
+		(HMENU) IDC_INSTALL_PROGRESS_FOUND_ITEM,
+		NULL,
+		NULL);
+
+	CenterPopupToOwner(hProgressWnd, hWnd);
+	ShowWindow(hProgressWnd, SW_SHOW);
+	UpdateWindow(hProgressWnd);
+	SetTimer(hProgressWnd, INSTALL_PROGRESS_TIMER_ID, 120, NULL);
+
+	EnableWindow(hWnd, FALSE);
+
+	InstallProgressContext ctx = {};
+	ctx.doneEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
+	if (!ctx.doneEvent)
+	{
+		EnableWindow(hWnd, TRUE);
+		DestroyWindow(hProgressWnd);
+		if (cacheOnlyMode)
+			RebuildSystemIconCacheOnly();
+		else
+			Install();
+		return;
+	}
+	ctx.cacheOnlyMode = cacheOnlyMode;
+
+	DWORD threadId = 0;
+	SetInstallDiscoveryProgressCallback(InstallDiscoveryProgressRelayCallback, hProgressWnd);
+	HANDLE hThread = CreateThread(NULL, 0, InstallWithProgressThreadProc, &ctx, 0, &threadId);
+	if (!hThread)
+	{
+		SetInstallDiscoveryProgressCallback(NULL, NULL);
+		CloseHandle(ctx.doneEvent);
+		EnableWindow(hWnd, TRUE);
+		DestroyWindow(hProgressWnd);
+		if (cacheOnlyMode)
+			RebuildSystemIconCacheOnly();
+		else
+			Install();
+		return;
+	}
+
+	for (;;)
+	{
+		DWORD waitResult = MsgWaitForMultipleObjects(1, &ctx.doneEvent, FALSE, 50, QS_ALLINPUT);
+		if (waitResult == WAIT_OBJECT_0)
+			break;
+
+		MSG msg = {};
+		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+		{
+			if (!IsDialogMessage(hProgressWnd, &msg) && !IsDialogMessage(hWnd, &msg))
+			{
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}
+		}
+	}
+
+	if (hProgressBar)
+		SendMessageW(hProgressBar, PBM_SETMARQUEE, FALSE, 0);
+	SetInstallDiscoveryProgressCallback(NULL, NULL);
+
+	CloseHandle(hThread);
+	CloseHandle(ctx.doneEvent);
+
+	DestroyWindow(hProgressWnd);
+	EnableWindow(hWnd, TRUE);
+	SetActiveWindow(hWnd);
+}
+
+
 static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	switch (uMsg)
@@ -4018,6 +4775,7 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 					SendMessageA(GetDlgItem(hWnd, IDC_REFRESH), WM_SETFONT, WPARAM(buttonFont), TRUE);
 						SendMessageA(GetDlgItem(hWnd, IDC_REINSTALL), WM_SETFONT, WPARAM(buttonFont), TRUE);
 					SendMessageA(GetDlgItem(hWnd, IDC_OPEN_INSTALL_FOLDER), WM_SETFONT, WPARAM(buttonFont), TRUE);
+					SendMessageA(GetDlgItem(hWnd, IDC_PACKAGE_ICONS), WM_SETFONT, WPARAM(buttonFont), TRUE);
 				}
 			}
 
@@ -4046,7 +4804,7 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 				{
 					if (!isInstalled)
 					{
-						Install();
+						RunInstallWithProgressWindow(hWnd, FALSE, FALSE);
 						isInstalled = TRUE;
 						SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
 						UpdateInstallDependentControls(hWnd);
@@ -4078,12 +4836,21 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 
 				case IDC_REINSTALL:
 				{
-					Install();
-					isInstalled = TRUE;
-					isRunningOutsideInstallFolder = FALSE;
-					SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
-					UpdateInstallDependentControls(hWnd);
-					MessageBoxA(hWnd, "Re-installation complete.", "Completion:", (MB_OK | MB_ICONASTERISK));
+					if (isInstalled && !isRunningOutsideInstallFolder)
+					{
+						RunInstallWithProgressWindow(hWnd, FALSE, TRUE);
+						UpdateInstallDependentControls(hWnd);
+						MessageBoxA(hWnd, "Icon cache re-scan complete.", "Completion:", (MB_OK | MB_ICONASTERISK));
+					}
+					else
+					{
+						RunInstallWithProgressWindow(hWnd, TRUE, FALSE);
+						isInstalled = TRUE;
+						isRunningOutsideInstallFolder = FALSE;
+						SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
+						UpdateInstallDependentControls(hWnd);
+						MessageBoxA(hWnd, "Re-installation complete.", "Completion:", (MB_OK | MB_ICONASTERISK));
+					}
 					return (INT_PTR) TRUE;
 				}
 				break;
@@ -4108,6 +4875,13 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 					if (!OpenDirectoryInExplorer(myPathGlobal))
 						MessageBoxA(hWnd, "Unable to open install folder.", "Error:", (MB_OK | MB_ICONERROR));
 
+					return (INT_PTR) TRUE;
+				}
+				break;
+
+				case IDC_PACKAGE_ICONS:
+				{
+					PackageIconsIntoDll(hWnd);
 					return (INT_PTR) TRUE;
 				}
 				break;

@@ -1,0 +1,13 @@
+[BUILD] Compilando Release Win32...
+Vers├úo do MSBuild 18.5.4+cb4e32d21 para .NET Framework
+
+  FolderColorize.cpp
+  Installer.cpp
+  main.cpp
+  Utility.cpp
+  Gerando c├│digo
+  Previous IPDB not found, fall back to full compilation.
+  All 996 functions were compiled because no usable IPDB/IOBJ from previous compilation was found.
+  Finalizada a gera├º├úo de c├│digo
+  Controller.vcxproj -> D:\GIT\Folcolor\src\Controller\Win32\Release\Foldrion.exe
+[OK] Build concluido.
