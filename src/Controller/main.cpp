@@ -70,14 +70,49 @@ static BOOL FindDoppelganger()
 // ----------------------------------------------------------------------------
 // Custom hyperlink control
 #define VISITED_COLOR RGB(160, 160, 260)
-#define URL_BACK_COLOR RGB(76, 76, 76)
 #define URL_FONT_HEIGHT 18
 #define URL_FONT_WIDTH FW_SEMIBOLD
 static HFONT tweakedFont = NULL, undlineFont = NULL;
 static BOOL isClicking = FALSE, isVisited = FALSE;
-static COLORREF urlColor = RGB(245, 245, 245);
-static HBRUSH buttonBrush = NULL;
+static COLORREF urlColor = RGB(0, 102, 204);
+static HBRUSH gDialogBackgroundBrush = NULL;
+static HBRUSH gDialogButtonBrush = NULL;
+static COLORREF gDialogBackgroundColor = RGB(255, 255, 255);
+static COLORREF gDialogButtonColor = RGB(240, 240, 240);
+static COLORREF gDialogTextColor = RGB(0, 0, 0);
 static HCURSOR mouseOverCursor = NULL;
+
+/**
+ * Refresh installer dialog palette from the current system light/dark mode.
+ */
+static void UpdateInstallerTheme(HWND hWnd)
+{
+	BOOL darkMode = IsSystemDarkModeEnabled();
+	gDialogBackgroundColor = darkMode ? RGB(32, 32, 32) : RGB(255, 255, 255);
+	gDialogButtonColor = darkMode ? RGB(52, 52, 52) : RGB(240, 240, 240);
+	gDialogTextColor = darkMode ? RGB(232, 232, 232) : RGB(0, 0, 0);
+
+	if (gDialogBackgroundBrush)
+	{
+		DeleteObject(gDialogBackgroundBrush);
+		gDialogBackgroundBrush = NULL;
+	}
+
+	if (gDialogButtonBrush)
+	{
+		DeleteObject(gDialogButtonBrush);
+		gDialogButtonBrush = NULL;
+	}
+
+	gDialogBackgroundBrush = CreateSolidBrush(gDialogBackgroundColor);
+	gDialogButtonBrush = CreateSolidBrush(gDialogButtonColor);
+
+	if (!isVisited)
+		urlColor = darkMode ? RGB(138, 180, 248) : RGB(0, 102, 204);
+
+	ApplyThemeToWindowAndChildren(hWnd);
+	InvalidateRect(hWnd, NULL, TRUE);
+}
 
 /**
  * Build absolute path to the installed executable expected in the install folder.
@@ -249,9 +284,11 @@ enum PickerColorCategoryIndex
 #define IDC_PICKER_PREVIEW 2009
 #define IDC_PICKER_PREVIEW_LABEL 2010
 #define IDC_PICKER_CREATE_DERIVED 2011
+#define IDC_PICKER_DELETE 2012
 
 #define PICKER_SEARCH_DEBOUNCE_TIMER_ID 1
 #define PICKER_SEARCH_DEBOUNCE_MS 500
+#define WM_PICKER_DELETE_REQUEST (WM_APP + 101)
 
 /** Large icon displayed in the preview box. */
 static HICON gPickerPreviewIcon      = NULL;
@@ -324,6 +361,106 @@ struct DerivedEditorState
 };
 
 static DerivedEditorState gDerivedEditor = {};
+
+// Runtime picker/editor theme resources.
+static HBRUSH gRuntimeBackgroundBrush = NULL;
+static HBRUSH gRuntimePanelBrush = NULL;
+static HBRUSH gRuntimeSelectionBrush = NULL;
+static COLORREF gRuntimeBackgroundColor = RGB(250, 250, 250);
+static COLORREF gRuntimePanelColor = RGB(255, 255, 255);
+static COLORREF gRuntimeTextColor = RGB(24, 24, 24);
+static COLORREF gRuntimeSelectionColor = RGB(0, 120, 215);
+static COLORREF gRuntimeSelectionTextColor = RGB(255, 255, 255);
+static BOOL gRuntimeThemeDark = FALSE;
+static int gRuntimeThemeUsers = 0;
+
+/**
+ * Rebuild picker/editor brushes based on current light/dark preference.
+ */
+static void RefreshRuntimeThemeResources()
+{
+	BOOL darkMode = IsSystemDarkModeEnabled();
+	if ((gRuntimeBackgroundBrush != NULL) && (gRuntimeThemeDark == darkMode))
+		return;
+
+	if (gRuntimeBackgroundBrush)
+	{
+		DeleteObject(gRuntimeBackgroundBrush);
+		gRuntimeBackgroundBrush = NULL;
+	}
+
+	if (gRuntimePanelBrush)
+	{
+		DeleteObject(gRuntimePanelBrush);
+		gRuntimePanelBrush = NULL;
+	}
+
+	if (gRuntimeSelectionBrush)
+	{
+		DeleteObject(gRuntimeSelectionBrush);
+		gRuntimeSelectionBrush = NULL;
+	}
+
+	gRuntimeThemeDark = darkMode;
+	if (darkMode)
+	{
+		gRuntimeBackgroundColor = RGB(32, 32, 32);
+		gRuntimePanelColor = RGB(44, 44, 44);
+		gRuntimeTextColor = RGB(232, 232, 232);
+		gRuntimeSelectionColor = RGB(58, 91, 138);
+		gRuntimeSelectionTextColor = RGB(255, 255, 255);
+	}
+	else
+	{
+		gRuntimeBackgroundColor = RGB(250, 250, 250);
+		gRuntimePanelColor = RGB(255, 255, 255);
+		gRuntimeTextColor = RGB(24, 24, 24);
+		gRuntimeSelectionColor = RGB(0, 120, 215);
+		gRuntimeSelectionTextColor = RGB(255, 255, 255);
+	}
+
+	gRuntimeBackgroundBrush = CreateSolidBrush(gRuntimeBackgroundColor);
+	gRuntimePanelBrush = CreateSolidBrush(gRuntimePanelColor);
+	gRuntimeSelectionBrush = CreateSolidBrush(gRuntimeSelectionColor);
+}
+
+/**
+ * Apply runtime theme and repaint a picker/editor window.
+ */
+static void ApplyRuntimeTheme(HWND hWnd)
+{
+	RefreshRuntimeThemeResources();
+	ApplyThemeToWindowAndChildren(hWnd);
+	InvalidateRect(hWnd, NULL, TRUE);
+	UpdateWindow(hWnd);
+}
+
+/**
+ * Release runtime theme brushes once no picker/editor windows are open.
+ */
+static void ReleaseRuntimeThemeResourcesIfUnused()
+{
+	if (gRuntimeThemeUsers > 0)
+		return;
+
+	if (gRuntimeBackgroundBrush)
+	{
+		DeleteObject(gRuntimeBackgroundBrush);
+		gRuntimeBackgroundBrush = NULL;
+	}
+
+	if (gRuntimePanelBrush)
+	{
+		DeleteObject(gRuntimePanelBrush);
+		gRuntimePanelBrush = NULL;
+	}
+
+	if (gRuntimeSelectionBrush)
+	{
+		DeleteObject(gRuntimeSelectionBrush);
+		gRuntimeSelectionBrush = NULL;
+	}
+}
 
 static LRESULT CALLBACK DerivedPreviewSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
 	UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
@@ -863,6 +1000,12 @@ static void PopulatePickerItems(HWND hWnd, int categoryIndex)
 
 
 /**
+ * Enable or disable picker delete button from current selection.
+ */
+static void UpdatePickerDeleteButtonState(HWND hWnd);
+
+
+/**
  * Apply current search text to item list immediately.
  */
 static void ApplyPickerSearchNow(HWND hWnd)
@@ -871,6 +1014,7 @@ static void ApplyPickerSearchNow(HWND hWnd)
 	HWND hCat = GetDlgItem(hWnd, IDC_PICKER_CATEGORY);
 	int sel = (int) SendMessageW(hCat, LB_GETCURSEL, 0, 0);
 	PopulatePickerItems(hWnd, sel);
+	UpdatePickerDeleteButtonState(hWnd);
 }
 
 
@@ -2033,6 +2177,7 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 	{
 		case WM_CREATE:
 		{
+			gRuntimeThemeUsers++;
 			INITCOMMONCONTROLSEX icc = {};
 			icc.dwSize = sizeof(icc);
 			icc.dwICC = ICC_BAR_CLASSES;
@@ -2118,8 +2263,40 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 			RefreshDerivedLayerList(hWnd);
 			SyncDerivedControlsFromSelection(hWnd);
 			RebuildDerivedComposite();
+			ApplyRuntimeTheme(hWnd);
 		}
 		return 0;
+
+		case WM_THEMECHANGED:
+		case WM_SYSCOLORCHANGE:
+		case WM_SETTINGCHANGE:
+			ApplyRuntimeTheme(hWnd);
+			return 0;
+
+		case WM_ERASEBKGND:
+		{
+			RECT rc = {};
+			GetClientRect(hWnd, &rc);
+			FillRect((HDC) wParam, &rc, gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+			return 1;
+		}
+
+		case WM_CTLCOLORSTATIC:
+		{
+			HDC hdc = (HDC) wParam;
+			SetTextColor(hdc, gRuntimeTextColor);
+			SetBkColor(hdc, gRuntimeBackgroundColor);
+			return (LRESULT) (gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+		}
+
+		case WM_CTLCOLOREDIT:
+		case WM_CTLCOLORLISTBOX:
+		{
+			HDC hdc = (HDC) wParam;
+			SetTextColor(hdc, gRuntimeTextColor);
+			SetBkColor(hdc, gRuntimePanelColor);
+			return (LRESULT) (gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
+		}
 
 		case WM_DRAWITEM:
 		{
@@ -2127,7 +2304,7 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 			if (!di || (di->CtlID != IDC_DERIVED_PREVIEW))
 				break;
 
-			FillRect(di->hDC, &di->rcItem, GetSysColorBrush(COLOR_WINDOW));
+			FillRect(di->hDC, &di->rcItem, gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
 			if (gDerivedEditor.composedPixels.size() == ((size_t) 256 * 256 * 4))
 			{
 				BITMAPINFO bmi = {};
@@ -2324,6 +2501,9 @@ static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wPa
 
 		case WM_DESTROY:
 			gDerivedEditor.draggingLayer = FALSE;
+			if (gRuntimeThemeUsers > 0)
+				gRuntimeThemeUsers--;
+			ReleaseRuntimeThemeResourcesIfUnused();
 			return 0;
 	}
 
@@ -2445,6 +2625,201 @@ static void SelectPickerItemByResourcePath(HWND hWnd, const std::wstring& path)
 
 
 /**
+ * Return TRUE when one path lives under another directory path.
+ */
+static BOOL IsPathUnderFolder(const std::wstring& filePath, const std::wstring& folderPath)
+{
+	if (filePath.empty() || folderPath.empty())
+		return FALSE;
+
+	WCHAR fullFile[MAX_PATH] = {};
+	WCHAR fullFolder[MAX_PATH] = {};
+	DWORD fileLen = GetFullPathNameW(filePath.c_str(), _countof(fullFile), fullFile, NULL);
+	DWORD folderLen = GetFullPathNameW(folderPath.c_str(), _countof(fullFolder), fullFolder, NULL);
+	if ((fileLen == 0) || (fileLen >= _countof(fullFile)) || (folderLen == 0) || (folderLen >= _countof(fullFolder)))
+		return FALSE;
+
+	std::wstring normalizedFile = ToLowerCopy(fullFile);
+	std::wstring normalizedFolder = ToLowerCopy(fullFolder);
+	if (normalizedFolder.back() != L'\\')
+		normalizedFolder.push_back(L'\\');
+
+	if (normalizedFile.size() <= normalizedFolder.size())
+		return FALSE;
+
+	return (normalizedFile.compare(0, normalizedFolder.size(), normalizedFolder) == 0);
+}
+
+
+/**
+ * Return TRUE when a picker item is a removable custom icon file.
+ */
+static BOOL IsRemovableCustomPickerItem(const PickerItem& item)
+{
+	if (item.isBuiltIn || item.resourcePath.empty())
+		return FALSE;
+
+	if (_wcsicmp(PathFindExtensionW(item.resourcePath.c_str()), L".ico") != 0)
+		return FALSE;
+
+	std::wstring iconsRoot = std::wstring(myPathGlobal) + L"icons";
+	return IsPathUnderFolder(item.resourcePath, iconsRoot);
+}
+
+
+/**
+ * Enable or disable picker delete button from current selection.
+ */
+static void UpdatePickerDeleteButtonState(HWND hWnd)
+{
+	HWND hDeleteButton = GetDlgItem(hWnd, IDC_PICKER_DELETE);
+	HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
+	if (!hDeleteButton || !hItem)
+		return;
+
+	BOOL canDelete = FALSE;
+	int itemSel = (int) SendMessageW(hItem, LB_GETCURSEL, 0, 0);
+	if (itemSel != LB_ERR)
+	{
+		int visIdx = (int) SendMessageW(hItem, LB_GETITEMDATA, (WPARAM) itemSel, 0);
+		if ((visIdx >= 0) && (visIdx < (int) gPickerVisibleItems.size()))
+		{
+			const PickerVisibleItem& vi = gPickerVisibleItems[visIdx];
+			if ((vi.categoryIndex >= 0) && (vi.categoryIndex < (int) gPickerCategories.size()) &&
+				(vi.itemIndex >= 0) && (vi.itemIndex < (int) gPickerCategories[vi.categoryIndex].items.size()))
+			{
+				canDelete = IsRemovableCustomPickerItem(gPickerCategories[vi.categoryIndex].items[vi.itemIndex]);
+			}
+		}
+	}
+
+	EnableWindow(hDeleteButton, canDelete);
+}
+
+
+/**
+ * Delete selected custom icon file from disk with user confirmation.
+ */
+static void DeleteSelectedCustomIcon(HWND hWnd)
+{
+	HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
+	if (!hItem)
+		return;
+
+	int itemSel = (int) SendMessageW(hItem, LB_GETCURSEL, 0, 0);
+	if (itemSel == LB_ERR)
+	{
+		MessageBoxA(hWnd, "Select an icon.", "Info:", MB_OK | MB_ICONINFORMATION);
+		UpdatePickerDeleteButtonState(hWnd);
+		return;
+	}
+
+	int visIdx = (int) SendMessageW(hItem, LB_GETITEMDATA, (WPARAM) itemSel, 0);
+	if ((visIdx < 0) || (visIdx >= (int) gPickerVisibleItems.size()))
+	{
+		UpdatePickerDeleteButtonState(hWnd);
+		return;
+	}
+
+	const PickerVisibleItem& vi = gPickerVisibleItems[visIdx];
+	if ((vi.categoryIndex < 0) || (vi.categoryIndex >= (int) gPickerCategories.size()) ||
+		(vi.itemIndex < 0) || (vi.itemIndex >= (int) gPickerCategories[vi.categoryIndex].items.size()))
+	{
+		UpdatePickerDeleteButtonState(hWnd);
+		return;
+	}
+
+	const PickerItem& item = gPickerCategories[vi.categoryIndex].items[vi.itemIndex];
+	if (!IsRemovableCustomPickerItem(item))
+	{
+		MessageBoxA(hWnd, "Only custom ICO icons can be deleted.", "Info:", MB_OK | MB_ICONINFORMATION);
+		UpdatePickerDeleteButtonState(hWnd);
+		return;
+	}
+
+	std::wstring fileName = PathFindFileNameW(item.resourcePath.c_str());
+	WCHAR question[512] = {};
+	_snwprintf_s(question, _countof(question), (_countof(question) - 1),
+		L"Delete this custom icon file?\n\n%s",
+		fileName.c_str());
+
+	if (MessageBoxW(hWnd, question, L"Confirm Delete", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+	{
+		UpdatePickerDeleteButtonState(hWnd);
+		return;
+	}
+
+	if (!DeleteFileW(item.resourcePath.c_str()))
+	{
+		MessageBoxA(hWnd, "Unable to delete icon file.", "Error:", MB_OK | MB_ICONERROR);
+		UpdatePickerDeleteButtonState(hWnd);
+		return;
+	}
+
+	if (isInstalled)
+		RefreshInstalledShellMenu();
+
+	ReleasePickerPreviewIcon();
+	ReleasePickerIcons();
+	BuildPickerCategories(gPickerCategories);
+	PopulatePickerCategories(hWnd);
+
+	HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
+	if (hPreview)
+		InvalidateRect(hPreview, NULL, TRUE);
+	UpdatePickerPreviewLabel(hWnd);
+	UpdatePickerDeleteButtonState(hWnd);
+}
+
+
+/**
+ * Subclass to support Delete key and middle-click deletion in picker list.
+ */
+static LRESULT CALLBACK PickerItemListSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
+	UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+{
+	UNREFERENCED_PARAMETER(uIdSubclass);
+	UNREFERENCED_PARAMETER(dwRefData);
+
+	HWND hParent = GetParent(hWnd);
+	if (!hParent)
+		return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+
+	switch (uMsg)
+	{
+		case WM_KEYDOWN:
+			if (wParam == VK_DELETE)
+			{
+				SendMessageW(hParent, WM_PICKER_DELETE_REQUEST, 0, 0);
+				return 0;
+			}
+			break;
+
+		case WM_MBUTTONUP:
+		{
+			POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
+			DWORD rowResult = (DWORD) SendMessageW(hWnd, LB_ITEMFROMPOINT, 0, MAKELPARAM(pt.x, pt.y));
+			int clickedRow = LOWORD(rowResult);
+			BOOL outsideListItem = HIWORD(rowResult);
+			if (!outsideListItem && (clickedRow != LB_ERR))
+			{
+				SendMessageW(hWnd, LB_SETCURSEL, (WPARAM) clickedRow, 0);
+				SendMessageW(hParent, WM_PICKER_DELETE_REQUEST, (WPARAM) clickedRow, 0);
+				return 0;
+			}
+		}
+		break;
+
+		case WM_NCDESTROY:
+			RemoveWindowSubclass(hWnd, PickerItemListSubclassProc, 1);
+			break;
+	}
+
+	return DefSubclassProc(hWnd, uMsg, wParam, lParam);
+}
+
+
+/**
  * Picker window procedure.
  */
 static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -2453,6 +2828,7 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 	{
 		case WM_CREATE:
 		{
+			gRuntimeThemeUsers++;
 			CreateWindowW(L"STATIC", L"Category", WS_CHILD | WS_VISIBLE,
 				12, 12, 250, 18, hWnd, NULL, NULL, NULL);
 			CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER,
@@ -2477,6 +2853,8 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 				274, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_APPLY, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Import Icon", WS_CHILD | WS_VISIBLE,
 				375, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_IMPORT, NULL, NULL);
+			CreateWindowW(L"BUTTON", L"Delete Icon", WS_CHILD | WS_VISIBLE,
+				375, 436, 95, 28, hWnd, (HMENU) IDC_PICKER_DELETE, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Create Derived Icon", WS_CHILD | WS_VISIBLE,
 				552, 404, 144, 28, hWnd, (HMENU) IDC_PICKER_CREATE_DERIVED, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Open Icons Folder", WS_CHILD | WS_VISIBLE,
@@ -2491,8 +2869,42 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 			// Show the folder's existing icon in the preview until user picks something.
 			LoadFolderCurrentPreviewIcon();
 			UpdatePickerPreviewLabel(hWnd);
+			SetWindowSubclass(GetDlgItem(hWnd, IDC_PICKER_ITEM), PickerItemListSubclassProc, 1, 0);
+			UpdatePickerDeleteButtonState(hWnd);
+			ApplyRuntimeTheme(hWnd);
 		}
 		return 0;
+
+		case WM_THEMECHANGED:
+		case WM_SYSCOLORCHANGE:
+		case WM_SETTINGCHANGE:
+			ApplyRuntimeTheme(hWnd);
+			return 0;
+
+		case WM_ERASEBKGND:
+		{
+			RECT rc = {};
+			GetClientRect(hWnd, &rc);
+			FillRect((HDC) wParam, &rc, gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+			return 1;
+		}
+
+		case WM_CTLCOLORSTATIC:
+		{
+			HDC hdc = (HDC) wParam;
+			SetTextColor(hdc, gRuntimeTextColor);
+			SetBkColor(hdc, gRuntimeBackgroundColor);
+			return (LRESULT) (gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+		}
+
+		case WM_CTLCOLOREDIT:
+		case WM_CTLCOLORLISTBOX:
+		{
+			HDC hdc = (HDC) wParam;
+			SetTextColor(hdc, gRuntimeTextColor);
+			SetBkColor(hdc, gRuntimePanelColor);
+			return (LRESULT) (gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
+		}
 
 		case WM_MEASUREITEM:
 		{
@@ -2513,7 +2925,7 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 			// --- Preview box ---
 			if (di->CtlID == IDC_PICKER_PREVIEW)
 			{
-				FillRect(di->hDC, &di->rcItem, GetSysColorBrush(COLOR_WINDOW));
+				FillRect(di->hDC, &di->rcItem, gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
 				if (gPickerPreviewIcon)
 				{
 					int w = di->rcItem.right  - di->rcItem.left;
@@ -2531,14 +2943,14 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 				break;
 
 			HBRUSH bgBrush = NULL;
-			COLORREF textColor = GetSysColor(COLOR_WINDOWTEXT);
+			COLORREF textColor = gRuntimeTextColor;
 			if (di->itemState & ODS_SELECTED)
 			{
-				bgBrush = GetSysColorBrush(COLOR_HIGHLIGHT);
-				textColor = GetSysColor(COLOR_HIGHLIGHTTEXT);
+				bgBrush = gRuntimeSelectionBrush ? gRuntimeSelectionBrush : GetSysColorBrush(COLOR_HIGHLIGHT);
+				textColor = gRuntimeSelectionTextColor;
 			}
 			else
-				bgBrush = GetSysColorBrush(COLOR_WINDOW);
+				bgBrush = gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW);
 
 			FillRect(di->hDC, &di->rcItem, bgBrush);
 
@@ -2578,6 +2990,10 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 		{
 			switch (LOWORD(wParam))
 			{
+				case IDC_PICKER_DELETE:
+				DeleteSelectedCustomIcon(hWnd);
+				break;
+
 				case IDC_PICKER_PREVIEW:
 				if (HIWORD(wParam) == STN_CLICKED)
 				{
@@ -2613,6 +3029,7 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 					if (hPreview) InvalidateRect(hPreview, NULL, TRUE);
 					UpdatePickerPreviewLabel(hWnd);
 					ApplyPickerSearchNow(hWnd);
+					UpdatePickerDeleteButtonState(hWnd);
 				}
 				break;
 
@@ -2637,6 +3054,7 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 					HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
 					if (hPreview) InvalidateRect(hPreview, NULL, TRUE);
 					UpdatePickerPreviewLabel(hWnd);
+					UpdatePickerDeleteButtonState(hWnd);
 				}
 				break;
 
@@ -2695,6 +3113,7 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 					ReleasePickerIcons();
 					BuildPickerCategories(gPickerCategories);
 					PopulatePickerCategories(hWnd);
+					UpdatePickerDeleteButtonState(hWnd);
 
 					char msg[1024];
 					sprintf_s(msg, sizeof(msg),
@@ -2737,6 +3156,7 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 						BuildPickerCategories(gPickerCategories);
 						PopulatePickerCategories(hWnd);
 						SelectPickerItemByResourcePath(hWnd, savedPath);
+						UpdatePickerDeleteButtonState(hWnd);
 					}
 				}
 				break;
@@ -2774,6 +3194,10 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 		}
 		return 0;
 
+		case WM_PICKER_DELETE_REQUEST:
+			DeleteSelectedCustomIcon(hWnd);
+			return 0;
+
 		case WM_TIMER:
 		if (wParam == PICKER_SEARCH_DEBOUNCE_TIMER_ID)
 		{
@@ -2793,6 +3217,9 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 		ReleasePickerPreviewIcon();
 		gPickerVisibleItems.clear();
 		gPickerSearchQuery.clear();
+		if (gRuntimeThemeUsers > 0)
+			gRuntimeThemeUsers--;
+		ReleaseRuntimeThemeResourcesIfUnused();
 		PostQuitMessage(0);
 		return 0;
 	}
@@ -3127,10 +3554,17 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 				SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
 
 			UpdateInstallDependentControls(hWnd);
+			UpdateInstallerTheme(hWnd);
 
 			return (INT_PTR) TRUE;
 		}
 		break;
+
+		case WM_THEMECHANGED:
+		case WM_SYSCOLORCHANGE:
+		case WM_SETTINGCHANGE:
+			UpdateInstallerTheme(hWnd);
+			return (INT_PTR) TRUE;
 
 		case WM_COMMAND:
 		{
@@ -3213,24 +3647,44 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 
 		case WM_CTLCOLORSTATIC:
 		{
+			HDC hdcStatic = (HDC) wParam;
+			SetTextColor(hdcStatic, gDialogTextColor);
+			SetBkColor(hdcStatic, gDialogBackgroundColor);
+
 			DWORD id = GetDlgCtrlID((HWND)lParam);
 			if (id == IDC_HYPERLINK)
 			{
-				HDC hdcStatic = (HDC) wParam;
 				SetTextColor(hdcStatic, urlColor);
-				SetBkColor(hdcStatic, URL_BACK_COLOR);
-				return (INT_PTR) GetStockObject(NULL_PEN);
+				SetBkColor(hdcStatic, gDialogBackgroundColor);
 			}
+
+			if (gDialogBackgroundBrush)
+				return (INT_PTR) gDialogBackgroundBrush;
 		}
 		break;
 
 		case WM_CTLCOLORBTN:
 		{
-			if (!buttonBrush)
-				buttonBrush = CreateSolidBrush(RGB(128, 100, 100));
-			return (LRESULT) buttonBrush;
+			HDC hdcButton = (HDC) wParam;
+			SetTextColor(hdcButton, gDialogTextColor);
+			SetBkColor(hdcButton, gDialogButtonColor);
+			if (gDialogButtonBrush)
+				return (LRESULT) gDialogButtonBrush;
 		}
 		break;
+
+		case WM_DESTROY:
+			if (gDialogBackgroundBrush)
+			{
+				DeleteObject(gDialogBackgroundBrush);
+				gDialogBackgroundBrush = NULL;
+			}
+			if (gDialogButtonBrush)
+			{
+				DeleteObject(gDialogButtonBrush);
+				gDialogButtonBrush = NULL;
+			}
+			break;
 
 		case WM_CLOSE:		
 		EndDialog(hWnd, 0);		

@@ -1,8 +1,8 @@
 # Foldrion™: The Windows folder color utility
 ## Open Source, 100% free, minimalist, and secure.
 
-![GitHub](https://img.shields.io/github/license/kweatherman/Foldrion)
-![GitHub Release Date](https://img.shields.io/github/release-date/kweatherman/Foldrion)
+![GitHub](https://img.shields.io/github/license/zonaro/Foldrion)
+![GitHub Release Date](https://img.shields.io/github/release-date/zonaro/Foldrion)
 
 </br>
 
@@ -14,7 +14,7 @@ Coloring your Windows folders can help you organize and increase your productivi
 
 Especially useful for programmers/developers, artists, power users, etc., that might have dozens of folders and multilevel nested folder trees to manage.  
 
-### Latest release [download](https://github.com/kweatherman/Foldrion/releases/)
+### Latest release [download](https://github.com/zonaro/Foldrion/releases/)
 
 ## Installing
 1) Download the Foldrion.exe executable.  
@@ -37,17 +37,13 @@ Foldrion also supports custom icon resources from the installation folder.
 3) Supported import formats are `.ico`, `.dll`, `.jpg`, `.jpeg`, and `.png`.
 4) `.jpg`, `.jpeg`, and `.png` files are converted to `.ico` automatically during import.
 4) Subfolders inside `icons` become nested context submenus automatically.
-
-Context menu behavior:
-* `Colors` submenu is always shown first with the 14 embedded built-in colors.
-* `Custom` submenu is shown after `Colors` when user resources are found.
-* For `.dll` files, all icon entries from that DLL are listed in a dedicated submenu.
+ 
 
 ## Features
 * Selection of 14 colors based on the pleasant Google Material Design palette.  
 * 100% Free Open Source. You can known what it's made of and freely modify, remove, or add features to it.  
-* Minimalist, systems-level designed. Consists of a single executable with an embedded icons resource. Less than one megabyte size in total.  
-* Secure design: Absolute minimal API usage, using zero network calls. No adware, no nag screens, data collection, and   doesn't use a vulnerable Explorer shell extension like others do.  
+* Minimalist, systems-level designed. Consists of a single executable with an embedded icons resource.  
+* Secure design: Absolute minimal API usage, using zero network calls. No adware, no nag screens, data collection, and doesn't use a vulnerable Explorer shell extension like others do.  
 
 ## Requirements  
 Windows 7 to 11 32bit or 64bit OS.
@@ -60,7 +56,7 @@ See http://www.foldrion.com for more details.
 
 ## Bugs, Issues, Feature requests
 Please report any potential bugs or other issues, suggestions, feature requests, using the github issue feautre.    
-https://github.com/kweatherman/Foldrion/issues  
+https://github.com/zonaro/Foldrion/issues  
 
 ## Building
 Developed in C/C++ using [Microsoft Visual Studio 2022](https://visualstudio.microsoft.com):  
@@ -75,6 +71,6 @@ branch. Pull requests are welcomed.
 
 ## Licensing
 The code and assets in this project is licensed under MIT license.  
-Copyright (c) 2020 Kevin Weatherman  
-https://github.com/kweatherman/Foldrion/blob/main/LICENSE
+Copyright (c) 2026 Zonaro 
+https://github.com/zonaro/Foldrion/blob/main/LICENSE
 

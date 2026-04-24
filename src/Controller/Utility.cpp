@@ -3,6 +3,139 @@
 // MIT license https://opensource.org/licenses/MIT
 #include "StdAfx.h"
 
+/**
+Read app theme preference from Windows Personalize settings.
+Returns TRUE for dark mode and FALSE for light mode or unknown state.
+*/
+BOOL IsSystemDarkModeEnabled()
+{
+	DWORD value = 1;
+	DWORD valueSize = sizeof(value);
+	LSTATUS status = RegGetValueW(HKEY_CURRENT_USER,
+		L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
+		L"AppsUseLightTheme",
+		RRF_RT_REG_DWORD,
+		NULL,
+		&value,
+		&valueSize);
+
+	if (status != ERROR_SUCCESS)
+		return FALSE;
+
+	return (value == 0);
+}
+
+
+typedef HRESULT (WINAPI* DwmSetWindowAttributeFn)(HWND, DWORD, LPCVOID, DWORD);
+typedef HRESULT (WINAPI* SetWindowThemeFn)(HWND, LPCWSTR, LPCWSTR);
+
+
+/**
+Set immersive dark frame when DWM supports it.
+No-op on older systems where attributes are unavailable.
+*/
+static void ApplyFrameThemePreference(HWND hWnd, BOOL darkMode)
+{
+	if (!hWnd)
+		return;
+
+	HMODULE hDwm = LoadLibraryW(L"dwmapi.dll");
+	if (!hDwm)
+		return;
+
+	DwmSetWindowAttributeFn pDwmSetWindowAttribute = (DwmSetWindowAttributeFn) GetProcAddress(hDwm, "DwmSetWindowAttribute");
+	if (pDwmSetWindowAttribute)
+	{
+		BOOL useDark = darkMode ? TRUE : FALSE;
+		const DWORD kAttrNew = 20;
+		const DWORD kAttrOld = 19;
+		pDwmSetWindowAttribute(hWnd, kAttrNew, &useDark, sizeof(useDark));
+		pDwmSetWindowAttribute(hWnd, kAttrOld, &useDark, sizeof(useDark));
+	}
+
+	FreeLibrary(hDwm);
+}
+
+
+/**
+Apply Explorer/DarkMode_Explorer visual style to one control class.
+*/
+static void ApplyControlTheme(HWND hWnd, BOOL darkMode, SetWindowThemeFn pSetWindowTheme)
+{
+	if (!hWnd || !pSetWindowTheme)
+		return;
+
+	WCHAR className[64] = {};
+	GetClassNameW(hWnd, className, _countof(className));
+
+	if ((_wcsicmp(className, L"Edit") == 0) ||
+		(_wcsicmp(className, L"ListBox") == 0) ||
+		(_wcsicmp(className, L"ComboBox") == 0) ||
+		(_wcsicmp(className, L"SysListView32") == 0) ||
+		(_wcsicmp(className, L"SysTreeView32") == 0) ||
+		(_wcsicmp(className, L"msctls_trackbar32") == 0) ||
+		(_wcsicmp(className, L"Button") == 0))
+	{
+		pSetWindowTheme(hWnd, darkMode ? L"DarkMode_Explorer" : L"Explorer", NULL);
+	}
+}
+
+
+/**
+Context used while enumerating child controls.
+*/
+struct ThemeEnumContext
+{
+	BOOL darkMode;
+	SetWindowThemeFn setWindowTheme;
+};
+
+
+/**
+EnumChildWindows callback to theme all descendants.
+*/
+static BOOL CALLBACK EnumThemeChildrenProc(HWND hWnd, LPARAM lParam)
+{
+	ThemeEnumContext* context = (ThemeEnumContext*) lParam;
+	if (!context)
+		return TRUE;
+
+	ApplyControlTheme(hWnd, context->darkMode, context->setWindowTheme);
+	RedrawWindow(hWnd, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+	return TRUE;
+}
+
+
+/**
+Apply current system app theme to one window and all child controls.
+*/
+void ApplyThemeToWindowAndChildren(HWND hWnd)
+{
+	if (!hWnd)
+		return;
+
+	BOOL darkMode = IsSystemDarkModeEnabled();
+	ApplyFrameThemePreference(hWnd, darkMode);
+
+	HMODULE hUxTheme = LoadLibraryW(L"uxtheme.dll");
+	if (hUxTheme)
+	{
+		SetWindowThemeFn pSetWindowTheme = (SetWindowThemeFn) GetProcAddress(hUxTheme, "SetWindowTheme");
+		if (pSetWindowTheme)
+		{
+			ApplyControlTheme(hWnd, darkMode, pSetWindowTheme);
+
+			ThemeEnumContext context = {};
+			context.darkMode = darkMode;
+			context.setWindowTheme = pSetWindowTheme;
+			EnumChildWindows(hWnd, EnumThemeChildrenProc, (LPARAM) &context);
+		}
+
+		FreeLibrary(hUxTheme);
+	}
+
+	RedrawWindow(hWnd, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN);
+}
 
 // Formated output to OutputDebugStringA() for development
 void trace(LPCSTR pszFormat, ...)

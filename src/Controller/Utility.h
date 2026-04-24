@@ -26,6 +26,17 @@ BOOL DeleteRegistryPath(__in HKEY hKeyRoot, __in LPCSTR subKey);
 
 long fsize(FILE *fp);
 
+/**
+Apply the current Windows light/dark preference to one top-level window
+and its child controls, using graceful fallbacks on older systems.
+*/
+void ApplyThemeToWindowAndChildren(HWND hWnd);
+
+/**
+Return TRUE when the current user preference indicates dark app mode.
+*/
+BOOL IsSystemDarkModeEnabled();
+
 // ------------------------------------------------------------------------------------------------
 
 LPSTR GetErrorString(DWORD error, __out_bcount_z(1024) LPSTR buffer);

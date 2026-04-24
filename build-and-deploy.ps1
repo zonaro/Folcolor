@@ -90,11 +90,9 @@ try {
 
     if (-not (Test-Path -LiteralPath $exePath)) {
         throw "Executavel nao encontrado em $exePath"
-    }
-
-    Write-Host '[RUN] Iniciando Foldrion...' -ForegroundColor Green
-    Start-Process -FilePath $exePath | Out-Null
-    Write-Host '[OK] Build concluido e executavel iniciado.' -ForegroundColor Green
+    }  
+  
+    Write-Host '[OK] Build concluido.' -ForegroundColor Green
 }
 catch {
     Write-Error $_
