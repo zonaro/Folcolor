@@ -324,6 +324,12 @@ static BOOL  gPickerPreviewIsDefault = FALSE; // TRUE when showing the OS defaul
 #define IDC_DERIVED_EDIT_POSX 3025
 #define IDC_DERIVED_EDIT_POSY 3026
 #define IDC_DERIVED_COLORIZE 3027
+#define IDC_DERIVED_SAVE_CATEGORY_LABEL 3028
+#define IDC_DERIVED_SAVE_CATEGORY_EDIT 3029
+#define IDC_DERIVED_SAVE_NAME_LABEL 3030
+#define IDC_DERIVED_SAVE_NAME_EDIT 3031
+#define IDC_DERIVED_SAVE_OK 3032
+#define IDC_DERIVED_SAVE_CANCEL 3033
 
 /** A user-loaded overlay layer in the derived icon editor. */
 struct DerivedLayer
@@ -361,6 +367,18 @@ struct DerivedEditorState
 };
 
 static DerivedEditorState gDerivedEditor = {};
+
+/** Runtime state for the derived icon save dialog. */
+struct DerivedSaveDialogState
+{
+	HWND hWnd;
+	HWND hParent;
+	std::wstring category;
+	std::wstring name;
+	BOOL confirmed;
+};
+
+static DerivedSaveDialogState gDerivedSaveDialog = {};
 
 // Runtime picker/editor theme resources.
 static HBRUSH gRuntimeBackgroundBrush = NULL;
@@ -1334,6 +1352,368 @@ static std::wstring MakeUniqueDestinationPathMain(const std::wstring& dirPath, c
 }
 
 
+/** Return a copy trimmed from both ends by spaces, tabs, CR and LF. */
+static std::wstring TrimWhitespaceCopy(const std::wstring& value)
+{
+	if (value.empty())
+		return std::wstring();
+
+	size_t start = 0;
+	while ((start < value.size()) && iswspace(value[start]))
+		start++;
+
+	size_t end = value.size();
+	while ((end > start) && iswspace(value[end - 1]))
+		end--;
+
+	return value.substr(start, end - start);
+}
+
+
+/** Remove an extension from one name-like value. */
+static std::wstring RemoveExtensionCopy(const std::wstring& value)
+{
+	if (value.empty())
+		return std::wstring();
+
+	std::wstring name = value;
+	LPCWSTR filePart = PathFindFileNameW(name.c_str());
+	if (filePart && filePart[0])
+		name = filePart;
+
+	LPCWSTR ext = PathFindExtensionW(name.c_str());
+	if (ext && ext[0])
+		name.resize((size_t) (ext - name.c_str()));
+
+	return name;
+}
+
+
+/** Return TRUE when one character is not allowed in a Windows file/folder name. */
+static BOOL IsInvalidWindowsNameChar(WCHAR ch)
+{
+	if (ch < 32)
+		return TRUE;
+
+	return (ch == L'<' || ch == L'>' || ch == L':' || ch == L'"' || ch == L'/' ||
+		ch == L'\\' || ch == L'|' || ch == L'?' || ch == L'*');
+}
+
+
+/** Sanitize one path segment for directory usage. */
+static std::wstring SanitizeCategorySegment(const std::wstring& rawSegment)
+{
+	std::wstring trimmed = TrimWhitespaceCopy(rawSegment);
+	if (trimmed.empty())
+		return std::wstring();
+
+	std::wstring sanitized;
+	sanitized.reserve(trimmed.size());
+	for (size_t i = 0; i < trimmed.size(); i++)
+	{
+		if (IsInvalidWindowsNameChar(trimmed[i]))
+			continue;
+		sanitized.push_back(trimmed[i]);
+	}
+
+	sanitized = TrimWhitespaceCopy(sanitized);
+	while (!sanitized.empty() && ((sanitized.back() == L'.') || (sanitized.back() == L' ')))
+		sanitized.pop_back();
+
+	return sanitized;
+}
+
+
+/** Sanitize icon file stem (without extension) by removing invalid filename characters. */
+static std::wstring SanitizeIconFileStem(const std::wstring& rawName)
+{
+	std::wstring trimmed = TrimWhitespaceCopy(rawName);
+	std::wstring sanitized;
+	sanitized.reserve(trimmed.size());
+	for (size_t i = 0; i < trimmed.size(); i++)
+	{
+		if (IsInvalidWindowsNameChar(trimmed[i]))
+			continue;
+		sanitized.push_back(trimmed[i]);
+	}
+
+	sanitized = TrimWhitespaceCopy(sanitized);
+	while (!sanitized.empty() && ((sanitized.back() == L'.') || (sanitized.back() == L' ')))
+		sanitized.pop_back();
+
+	return sanitized;
+}
+
+
+/** Build default icon name from base icon plus first user layer. */
+static std::wstring BuildDefaultDerivedIconName()
+{
+	std::wstring baseName = RemoveExtensionCopy(gDerivedEditor.baseItem.label);
+	baseName = SanitizeIconFileStem(baseName);
+	if (baseName.empty())
+		baseName = L"base";
+
+	std::wstring firstOverlayName;
+	if (gDerivedEditor.layers.size() > 1)
+		firstOverlayName = RemoveExtensionCopy(gDerivedEditor.layers[1].displayName);
+
+	firstOverlayName = SanitizeIconFileStem(firstOverlayName);
+	if (firstOverlayName.empty())
+		return baseName;
+
+	std::wstring combined = baseName + L" " + firstOverlayName;
+	combined = SanitizeIconFileStem(combined);
+	if (combined.empty())
+		combined = L"derived-icon";
+
+	return combined;
+}
+
+
+/** Parse category input supporting both '/' and '\\' as nested folder separators. */
+static std::vector<std::wstring> ParseCategorySegments(const std::wstring& categoryInput)
+{
+	std::vector<std::wstring> segments;
+	std::wstring current;
+
+	for (size_t i = 0; i < categoryInput.size(); i++)
+	{
+		WCHAR ch = categoryInput[i];
+		if ((ch == L'/') || (ch == L'\\'))
+		{
+			std::wstring segment = SanitizeCategorySegment(current);
+			if (!segment.empty())
+				segments.push_back(segment);
+			current.clear();
+			continue;
+		}
+
+		current.push_back(ch);
+	}
+
+	std::wstring tail = SanitizeCategorySegment(current);
+	if (!tail.empty())
+		segments.push_back(tail);
+
+	return segments;
+}
+
+
+/** Resolve and ensure icons\{Category} path exists from raw category input. */
+static BOOL BuildDerivedCategoryFolderPath(const std::wstring& categoryInput, std::wstring& outFolder)
+{
+	outFolder.clear();
+
+	std::vector<std::wstring> segments = ParseCategorySegments(categoryInput);
+	if (segments.empty())
+		return FALSE;
+
+	std::wstring folderPath = std::wstring(myPathGlobal) + L"icons";
+	int rootResult = SHCreateDirectoryExW(NULL, folderPath.c_str(), NULL);
+	if (!((rootResult == ERROR_SUCCESS) || (rootResult == ERROR_ALREADY_EXISTS) || (rootResult == ERROR_FILE_EXISTS)))
+		return FALSE;
+
+	for (size_t i = 0; i < segments.size(); i++)
+	{
+		folderPath += L"\\";
+		folderPath += segments[i];
+	}
+
+	int result = SHCreateDirectoryExW(NULL, folderPath.c_str(), NULL);
+	if (!((result == ERROR_SUCCESS) || (result == ERROR_ALREADY_EXISTS) || (result == ERROR_FILE_EXISTS)))
+		return FALSE;
+
+	outFolder = folderPath;
+	return TRUE;
+}
+
+
+/** Save dialog window procedure for Category/Name input. */
+static LRESULT CALLBACK DerivedSaveDialogWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (msg)
+	{
+		case WM_CREATE:
+		{
+			CreateWindowW(L"STATIC", L"Category", WS_CHILD | WS_VISIBLE,
+				12, 12, 336, 18, hWnd, (HMENU) IDC_DERIVED_SAVE_CATEGORY_LABEL, NULL, NULL);
+			CreateWindowW(L"EDIT", gDerivedSaveDialog.category.c_str(), WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+				12, 32, 336, 24, hWnd, (HMENU) IDC_DERIVED_SAVE_CATEGORY_EDIT, NULL, NULL);
+
+			CreateWindowW(L"STATIC", L"Name", WS_CHILD | WS_VISIBLE,
+				12, 64, 336, 18, hWnd, (HMENU) IDC_DERIVED_SAVE_NAME_LABEL, NULL, NULL);
+			CreateWindowW(L"EDIT", gDerivedSaveDialog.name.c_str(), WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+				12, 84, 336, 24, hWnd, (HMENU) IDC_DERIVED_SAVE_NAME_EDIT, NULL, NULL);
+
+			CreateWindowW(L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+				176, 122, 82, 28, hWnd, (HMENU) IDC_DERIVED_SAVE_OK, NULL, NULL);
+			CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
+				266, 122, 82, 28, hWnd, (HMENU) IDC_DERIVED_SAVE_CANCEL, NULL, NULL);
+
+			SetFocus(GetDlgItem(hWnd, IDC_DERIVED_SAVE_NAME_EDIT));
+			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SAVE_NAME_EDIT), EM_SETSEL, 0, -1);
+			ApplyRuntimeTheme(hWnd);
+			return 0;
+		}
+
+		case WM_THEMECHANGED:
+		case WM_SYSCOLORCHANGE:
+		case WM_SETTINGCHANGE:
+			ApplyRuntimeTheme(hWnd);
+			return 0;
+
+		case WM_ERASEBKGND:
+		{
+			RECT rc = {};
+			GetClientRect(hWnd, &rc);
+			FillRect((HDC) wParam, &rc, gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+			return 1;
+		}
+
+		case WM_CTLCOLORSTATIC:
+		{
+			HDC hdc = (HDC) wParam;
+			SetTextColor(hdc, gRuntimeTextColor);
+			SetBkColor(hdc, gRuntimeBackgroundColor);
+			return (LRESULT) (gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+		}
+
+		case WM_CTLCOLOREDIT:
+		{
+			HDC hdc = (HDC) wParam;
+			SetTextColor(hdc, gRuntimeTextColor);
+			SetBkColor(hdc, gRuntimePanelColor);
+			return (LRESULT) (gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
+		}
+
+		case WM_COMMAND:
+			switch (LOWORD(wParam))
+			{
+				case IDC_DERIVED_SAVE_OK:
+				{
+					WCHAR categoryBuf[512] = {};
+					WCHAR nameBuf[512] = {};
+					GetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_SAVE_CATEGORY_EDIT), categoryBuf, _countof(categoryBuf));
+					GetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_SAVE_NAME_EDIT), nameBuf, _countof(nameBuf));
+
+					std::wstring category = TrimWhitespaceCopy(categoryBuf);
+					std::wstring name = TrimWhitespaceCopy(nameBuf);
+
+					if (ParseCategorySegments(category).empty())
+					{
+						MessageBoxA(hWnd, "Category is required.", "Info:", MB_OK | MB_ICONINFORMATION);
+						SetFocus(GetDlgItem(hWnd, IDC_DERIVED_SAVE_CATEGORY_EDIT));
+						break;
+					}
+
+					name = SanitizeIconFileStem(name);
+					if (name.empty())
+					{
+						MessageBoxA(hWnd, "Name is required.", "Info:", MB_OK | MB_ICONINFORMATION);
+						SetFocus(GetDlgItem(hWnd, IDC_DERIVED_SAVE_NAME_EDIT));
+						break;
+					}
+
+					gDerivedSaveDialog.category = category;
+					gDerivedSaveDialog.name = name;
+					gDerivedSaveDialog.confirmed = TRUE;
+					DestroyWindow(hWnd);
+				}
+				break;
+
+				case IDC_DERIVED_SAVE_CANCEL:
+					DestroyWindow(hWnd);
+					break;
+			}
+			return 0;
+
+		case WM_KEYDOWN:
+			if (wParam == VK_ESCAPE)
+			{
+				DestroyWindow(hWnd);
+				return 0;
+			}
+			break;
+
+		case WM_CLOSE:
+			DestroyWindow(hWnd);
+			return 0;
+
+		case WM_DESTROY:
+			return 0;
+	}
+
+	return DefWindowProcW(hWnd, msg, wParam, lParam);
+}
+
+
+/** Show modal save dialog and return selected Category and Name. */
+static BOOL PromptDerivedSaveValues(HWND hParent, const std::wstring& initialCategory, const std::wstring& initialName,
+	std::wstring& outCategory, std::wstring& outName)
+{
+	outCategory.clear();
+	outName.clear();
+
+	gDerivedSaveDialog = {};
+	gDerivedSaveDialog.hParent = hParent;
+	gDerivedSaveDialog.category = initialCategory;
+	gDerivedSaveDialog.name = initialName;
+	gDerivedSaveDialog.confirmed = FALSE;
+
+	WNDCLASSW wc = {};
+	wc.lpfnWndProc = DerivedSaveDialogWndProc;
+	wc.hInstance = GetModuleHandleW(NULL);
+	wc.lpszClassName = L"FoldrionDerivedSaveDialog";
+	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wc.hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+	RegisterClassW(&wc);
+
+	HWND hWnd = CreateWindowExW(
+		WS_EX_DLGMODALFRAME,
+		wc.lpszClassName,
+		L"Save Derived Icon",
+		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+		CW_USEDEFAULT, CW_USEDEFAULT, 376, 200,
+		hParent, NULL, wc.hInstance, NULL);
+
+	if (!hWnd)
+		return FALSE;
+
+	gRuntimeThemeUsers++;
+	gDerivedSaveDialog.hWnd = hWnd;
+	EnableWindow(hParent, FALSE);
+	ShowWindow(hWnd, SW_SHOW);
+	UpdateWindow(hWnd);
+
+	MSG msg = {};
+	while (IsWindow(hWnd) && (GetMessage(&msg, NULL, 0, 0) > 0))
+	{
+		if (!IsDialogMessage(hWnd, &msg))
+		{
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+	}
+
+	EnableWindow(hParent, TRUE);
+	SetActiveWindow(hParent);
+
+	if (gRuntimeThemeUsers > 0)
+		gRuntimeThemeUsers--;
+	ReleaseRuntimeThemeResourcesIfUnused();
+
+	if (!gDerivedSaveDialog.confirmed)
+		return FALSE;
+
+	outCategory = gDerivedSaveDialog.category;
+	outName = gDerivedSaveDialog.name;
+	return TRUE;
+}
+
+
 /** Convert any supported image file to 32bpp BGRA pixels. */
 static HRESULT LoadImageFileAsBgra(LPCWSTR sourcePath, std::vector<BYTE>& pixels, UINT& width, UINT& height)
 {
@@ -2135,40 +2515,28 @@ static void AddDerivedLayerFromFile(HWND hWnd)
 /** Save composed icon into icons\\Derived Icons with required name and unique suffix on conflict. */
 static BOOL SaveDerivedIconFromEditor(HWND hWnd)
 {
-	std::wstring derivedFolder;
-	if (!EnsureDerivedIconsFolder(derivedFolder))
+	std::wstring defaultCategory = L"Derived Icons";
+	std::wstring defaultName = BuildDefaultDerivedIconName();
+	if (defaultName.empty())
+		defaultName = L"derived-icon";
+
+	std::wstring categoryValue;
+	std::wstring nameValue;
+	if (!PromptDerivedSaveValues(hWnd, defaultCategory, defaultName, categoryValue, nameValue))
+		return FALSE;
+
+	std::wstring targetFolder;
+	if (!BuildDerivedCategoryFolderPath(categoryValue, targetFolder))
 	{
-		MessageBoxA(hWnd, "Unable to create derived icons folder.", "Error:", MB_OK | MB_ICONERROR);
+		MessageBoxA(hWnd, "Unable to create the requested category path under icons.", "Error:", MB_OK | MB_ICONERROR);
 		return FALSE;
 	}
 
-	WCHAR fileBuffer[MAX_PATH] = L"derived-icon.ico";
-	OPENFILENAMEW ofn = {};
-	static const WCHAR filter[] = L"Icon files (*.ico)\0*.ico\0\0";
+	std::wstring fileStem = SanitizeIconFileStem(nameValue);
+	if (fileStem.empty())
+		fileStem = defaultName;
 
-	ofn.lStructSize = sizeof(ofn);
-	ofn.hwndOwner = hWnd;
-	ofn.lpstrFilter = filter;
-	ofn.lpstrFile = fileBuffer;
-	ofn.nMaxFile = _countof(fileBuffer);
-	ofn.Flags = OFN_EXPLORER | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
-	ofn.lpstrInitialDir = derivedFolder.c_str();
-	ofn.lpstrTitle = L"Save Derived Icon";
-
-	if (!GetSaveFileNameW(&ofn))
-		return FALSE;
-
-	std::wstring fileName = PathFindFileNameW(fileBuffer);
-	if (fileName.empty())
-	{
-		MessageBoxA(hWnd, "Icon name is required.", "Info:", MB_OK | MB_ICONINFORMATION);
-		return FALSE;
-	}
-
-	if (_wcsicmp(PathFindExtensionW(fileName.c_str()), L".ico") != 0)
-		fileName += L".ico";
-
-	std::wstring targetPath = MakeUniqueDestinationPathMain(derivedFolder, fileName);
+	std::wstring targetPath = MakeUniqueDestinationPathMain(targetFolder, fileStem + L".ico");
 	if (targetPath.empty())
 	{
 		MessageBoxA(hWnd, "Unable to create unique target file name.", "Error:", MB_OK | MB_ICONERROR);
@@ -2848,39 +3216,39 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 		{
 			gRuntimeThemeUsers++;
 			CreateWindowW(L"STATIC", L"Category", WS_CHILD | WS_VISIBLE,
-				12, 12, 250, 18, hWnd, NULL, NULL, NULL);
+				12, 12, 500, 18, hWnd, NULL, NULL, NULL);
 			CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER,
-				12, 32, 250, 360, hWnd, (HMENU) IDC_PICKER_CATEGORY, NULL, NULL);
+				12, 32, 500, 360, hWnd, (HMENU) IDC_PICKER_CATEGORY, NULL, NULL);
 
 			CreateWindowW(L"STATIC", L"Icons", WS_CHILD | WS_VISIBLE,
-				274, 12, 80, 18, hWnd, NULL, NULL, NULL);
+				524, 12, 80, 18, hWnd, NULL, NULL, NULL);
 			CreateWindowW(L"STATIC", L"Search", WS_CHILD | WS_VISIBLE,
-				356, 12, 48, 18, hWnd, NULL, NULL, NULL);
+				606, 12, 48, 18, hWnd, NULL, NULL, NULL);
 			CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP,
-				408, 10, 132, 22, hWnd, (HMENU) IDC_PICKER_SEARCH, NULL, NULL);
+				658, 10, 386, 22, hWnd, (HMENU) IDC_PICKER_SEARCH, NULL, NULL);
 			CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER | LBS_OWNERDRAWFIXED,
-				274, 32, 260, 360, hWnd, (HMENU) IDC_PICKER_ITEM, NULL, NULL);
+				524, 32, 520, 360, hWnd, (HMENU) IDC_PICKER_ITEM, NULL, NULL);
 
 			// --- Preview panel (right of icon list) ---
 			CreateWindowW(L"STATIC", L"Preview", WS_CHILD | WS_VISIBLE,
-				546, 12, 150, 18, hWnd, (HMENU) IDC_PICKER_PREVIEW_LABEL, NULL, NULL);
+				1056, 12, 150, 18, hWnd, (HMENU) IDC_PICKER_PREVIEW_LABEL, NULL, NULL);
 			CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW | SS_NOTIFY | WS_BORDER,
-				546, 32, 150, 150, hWnd, (HMENU) IDC_PICKER_PREVIEW, NULL, NULL);
+				1056, 32, 150, 150, hWnd, (HMENU) IDC_PICKER_PREVIEW, NULL, NULL);
 
 			CreateWindowW(L"BUTTON", L"Apply Icon", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-				274, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_APPLY, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Import Icon", WS_CHILD | WS_VISIBLE,
-				375, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_IMPORT, NULL, NULL);
+				433, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_APPLY, NULL, NULL);
+			CreateWindowW(L"BUTTON", L"Import Icons", WS_CHILD | WS_VISIBLE,
+				148, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_IMPORT, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Delete Icon", WS_CHILD | WS_VISIBLE,
-				375, 436, 95, 28, hWnd, (HMENU) IDC_PICKER_DELETE, NULL, NULL);
+				687, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_DELETE, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Create Derived Icon", WS_CHILD | WS_VISIBLE,
-				552, 404, 144, 28, hWnd, (HMENU) IDC_PICKER_CREATE_DERIVED, NULL, NULL);
+				538, 404, 139, 28, hWnd, (HMENU) IDC_PICKER_CREATE_DERIVED, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Open Icons Folder", WS_CHILD | WS_VISIBLE,
-				138, 404, 130, 28, hWnd, (HMENU) IDC_PICKER_OPEN_ICONS, NULL, NULL);
+				12, 404, 130, 28, hWnd, (HMENU) IDC_PICKER_OPEN_ICONS, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Restore Default", WS_CHILD | WS_VISIBLE,
-				12, 404, 120, 28, hWnd, (HMENU) IDC_PICKER_RESTORE, NULL, NULL);
+				1002, 404, 120, 28, hWnd, (HMENU) IDC_PICKER_RESTORE, NULL, NULL);
 			CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
-				476, 404, 70, 28, hWnd, (HMENU) IDC_PICKER_CANCEL, NULL, NULL);
+				1132, 404, 74, 28, hWnd, (HMENU) IDC_PICKER_CANCEL, NULL, NULL);
 
 			PopulatePickerCategories(hWnd);
 
@@ -3271,9 +3639,9 @@ static int ShowFolderIconPicker(LPCWSTR folderPath)
 	HWND hWnd = CreateWindowExW(
 		WS_EX_APPWINDOW,
 		wc.lpszClassName,
-		L"Color Folder",
+		L"Customize Folder",
 		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-		CW_USEDEFAULT, CW_USEDEFAULT, 730, 480,
+		CW_USEDEFAULT, CW_USEDEFAULT, 1260, 480,
 		NULL, NULL, wc.hInstance, NULL);
 
 	if (!hWnd)

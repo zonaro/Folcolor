@@ -12,20 +12,17 @@ Coloring your Windows folders can help you organize and increase your productivi
 
 Especially useful for programmers/developers, artists, power users, etc., that might have dozens of folders and multilevel nested folder trees to manage.  
 
-### Latest release [download](https://github.com/zonaro/Foldrion/)
+### Latest release [download](https://raw.githubusercontent.com/zonaro/Foldrion/refs/heads/main/src/Controller/Win32/Release/Foldrion.exe)
 
 ## Installing
 1) Download the Foldrion.exe executable.  
 2) Run Foldrion.exe and click the "Install" button.
 3) Optionally click the "Import Icon" button to copy `.ico` and `.dll` files, or convert `.jpg` / `.jpeg` / `.png` images into `.ico` files inside the program `icons` folder.
 
-### The dialog window
-![Foldrion Logo](readme_assets/ui_screenshot_install.png)  
+ 
 
 </br>
-Now installed, simply right click on a folder, select "Color Folder", and select one of the 14 color selections.
-
-![Foldrion Logo](readme_assets/set_game_folder_white_anim.gif)
+Now installed, simply right click on a folder, select "Color Folder", search and select one of the colors selections. 
 
 ## Custom icon packs
 Foldrion also supports custom icon resources from the installation folder.

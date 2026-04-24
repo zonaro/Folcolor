@@ -25,6 +25,8 @@
 #define INSTALL_FOLDER L"Foldrion"
 
 #define REGISTRY_PATH "Directory\\shell\\Foldrion"
+#define FOLDER_PROGID "Foldrion.CustomFolder"
+#define FOLDER_PROGID_W L"Foldrion.CustomFolder"
 
 #define COMMAND_ICON "--index="
 #define COMMAND_RESOURCE "--resource="

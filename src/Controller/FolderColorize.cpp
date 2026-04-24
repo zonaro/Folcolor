@@ -9,6 +9,37 @@ extern WCHAR myPathGlobal[MAX_PATH];
 extern int iconOffsetGlobal;
 
 
+/**
+Mark a folder desktop.ini as a Foldrion-customized folder type.
+This enables the shell to show Foldrion-only verbs for customized folders.
+*/
+static void SetFoldrionDirectoryClass(LPCWSTR initPath)
+{
+	if (!initPath || !initPath[0])
+		return;
+
+	WritePrivateProfileStringW(L".ShellClassInfo", L"DirectoryClass", FOLDER_PROGID_W, initPath);
+}
+
+
+/**
+Remove the Foldrion folder type marker if this desktop.ini belongs to us.
+Leaves third-party DirectoryClass values untouched.
+*/
+static void ClearFoldrionDirectoryClass(LPCWSTR initPath)
+{
+	if (!initPath || !initPath[0])
+		return;
+
+	WCHAR directoryClass[256] = {};
+	GetPrivateProfileStringW(L".ShellClassInfo", L"DirectoryClass", L"", directoryClass, _countof(directoryClass), initPath);
+	if (_wcsicmp(directoryClass, FOLDER_PROGID_W) != 0)
+		return;
+
+	WritePrivateProfileStringW(L".ShellClassInfo", L"DirectoryClass", NULL, initPath);
+}
+
+
 // Restore default folder icon by removing the folder "desktop.ini"
 static void RestoreFolderIcon(LPWSTR widePath)
 {
@@ -84,6 +115,7 @@ static void RestoreFolderIcon(LPWSTR widePath)
 				WritePrivateProfileStringW(L".ShellClassInfo", L"IconFile", NULL, initPath);
 				WritePrivateProfileStringW(L".ShellClassInfo", L"IconIndex", NULL, initPath);
 				WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", NULL, initPath);
+				ClearFoldrionDirectoryClass(initPath);
 
 				// If there no fields left now in the ".ShellClassInfo" section remove it from the desktop.ini
 				WCHAR buffer[1024];
@@ -194,6 +226,7 @@ void SetFolderColor(int index, LPWSTR folderPath)
 			WCHAR iconPath[MAX_PATH];
 			_snwprintf_s(iconPath, MAX_PATH, (MAX_PATH-1), L"%sFoldrion.exe,%d", myPathGlobal, (index + iconOffsetGlobal));
 			WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", iconPath, initPath);
+			SetFoldrionDirectoryClass(initPath);
 
 			// Flush icon cache so the new icon setting take effect eventually
 			PathMakeSystemFolderW(folderPath);
@@ -219,6 +252,8 @@ void SetFolderColor(int index, LPWSTR folderPath)
 	HRESULT hr = SHGetSetFolderCustomSettings(&pfcs, folderPath, FCS_FORCEWRITE);
 	if (FAILED(hr))
 		CRITICAL_API_FAIL(SHGetSetFolderCustomSettings, HRESULT_CODE(hr));
+
+	SetFoldrionDirectoryClass(initPath);
 }
 
 
@@ -296,6 +331,7 @@ void SetFolderIconResource(LPCWSTR iconResourcePath, int iconIndex, LPWSTR folde
 
 			// Write our "IconResource" entry
 			WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", iconResource, initPath);
+			SetFoldrionDirectoryClass(initPath);
 
 			// Flush icon cache so the new icon setting take effect eventually
 			PathMakeSystemFolderW(folderPath);
@@ -316,6 +352,8 @@ void SetFolderIconResource(LPCWSTR iconResourcePath, int iconIndex, LPWSTR folde
 	HRESULT hr = SHGetSetFolderCustomSettings(&pfcs, folderPath, FCS_FORCEWRITE);
 	if (FAILED(hr))
 		CRITICAL_API_FAIL(SHGetSetFolderCustomSettings, HRESULT_CODE(hr));
+
+	SetFoldrionDirectoryClass(initPath);
 }
 
 

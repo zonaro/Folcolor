@@ -1008,6 +1008,8 @@ static void InstallRegistry()
 // Delete our existing key if it's already there
 if (!DeleteRegistryPath(HKEY_CLASSES_ROOT, REGISTRY_PATH))
 CRITICAL_API_FAIL(DeleteRegistryPath, GetLastError());
+if (!DeleteRegistryPath(HKEY_CLASSES_ROOT, FOLDER_PROGID))
+CRITICAL_API_FAIL(DeleteRegistryPath, GetLastError());
 
 // Root: HKEY_CLASSES_ROOT\Directory\shell\Foldrion
 HKEY rootKey = NULL;
@@ -1018,7 +1020,7 @@ CRITICAL_API_FAIL(RegCreateKeyExA, lStatus);
 std::wstring exePath = BuildInstalledExePath();
 
 // Root command entry: open picker window directly.
-WriteRegSzWOrFail(rootKey, L"MUIVerb", L"Color Folder");
+WriteRegSzWOrFail(rootKey, L"MUIVerb", L"Customize Folder");
 WriteRegSzWOrFail(rootKey, L"Icon", exePath);
 
 HKEY commandKey = CreateSubKeyWOrFail(rootKey, L"command");
@@ -1030,6 +1032,22 @@ WriteRegSzWOrFail(commandKey, NULL, cmd);
 RegCloseKey(commandKey);
 
 RegCloseKey(rootKey);
+
+// Folder type for directories customized by Foldrion through desktop.ini.
+HKEY folderProgIdKey = NULL;
+lStatus = RegCreateKeyExA(HKEY_CLASSES_ROOT, FOLDER_PROGID, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &folderProgIdKey, NULL);
+if (lStatus != ERROR_SUCCESS)
+CRITICAL_API_FAIL(RegCreateKeyExA, lStatus);
+
+WriteRegSzWOrFail(folderProgIdKey, NULL, L"Foldrion Custom Folder");
+WriteRegSzWOrFail(folderProgIdKey, L"CanUseForDirectory", L"");
+
+HKEY progIdShellKey = CreateSubKeyWOrFail(folderProgIdKey, L"shell");
+UINT order = 0;
+AddCommandItem(progIdShellKey, order, L"Restore Default", exePath,
+    BuildBuiltInCommand(exePath, COLOR_ICON_COUNT), FALSE);
+RegCloseKey(progIdShellKey);
+RegCloseKey(folderProgIdKey);
 }
 
 
