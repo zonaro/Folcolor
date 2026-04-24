@@ -92,7 +92,13 @@ try {
         throw "Executavel nao encontrado em $exePath"
     }  
   
-    Write-Host '[OK] Build concluido.' -ForegroundColor Green
+    Write-Host '[DEPLOY] Atualizando registro de shell com o build atual...' -ForegroundColor Cyan
+    & $exePath '--reinstall-registry'
+    if ($LASTEXITCODE -ne 0) {
+        throw "Atualizacao de registro falhou com codigo $LASTEXITCODE"
+    }
+
+    Write-Host '[OK] Build e registro concluidos.' -ForegroundColor Green
 }
 catch {
     Write-Error $_
