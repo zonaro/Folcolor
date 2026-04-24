@@ -906,6 +906,22 @@ static void AddIcoFolderCategory(std::vector<PickerCategory>& out, const std::ws
 
 
 /**
+ * Format a relative icons path as a picker category label.
+ */
+static std::wstring FormatCustomCategoryPath(const std::wstring& relPath)
+{
+	if (relPath.empty())
+		return L"Custom ICO";
+
+	std::wstring label = relPath;
+	for (size_t pos = 0; (pos = label.find(L'\\', pos)) != std::wstring::npos; pos += 3)
+		label.replace(pos, 1, L" - ");
+
+	return label;
+}
+
+
+/**
  * Recursively collect custom categories from install/icons.
  */
 static void CollectCustomCategories(std::vector<PickerCategory>& out, const std::wstring& rootIconsPath, const std::wstring& dirPath)
@@ -918,7 +934,7 @@ static void CollectCustomCategories(std::vector<PickerCategory>& out, const std:
 	if (rel == L".")
 		rel.clear();
 
-	std::wstring folderLabel = rel.empty() ? L"Custom ICO" : (L"Folder: " + rel);
+	std::wstring folderLabel = FormatCustomCategoryPath(rel);
 	AddIcoFolderCategory(out, folderLabel, dirPath);
 
 	std::wstring pattern = dirPath + L"\\*";
@@ -943,7 +959,9 @@ static void CollectCustomCategories(std::vector<PickerCategory>& out, const std:
 			LPCWSTR ext = PathFindExtensionW(full.c_str());
 			if (ext && (_wcsicmp(ext, L".dll") == 0))
 			{
-				std::wstring dllLabel = rel.empty() ? (L"DLL: " + std::wstring(fd.cFileName)) : (L"DLL: " + rel + L"\\" + fd.cFileName);
+				std::wstring dllLabel = rel.empty()
+					? std::wstring(fd.cFileName)
+					: (FormatCustomCategoryPath(rel) + L" - " + fd.cFileName);
 				AddDllCategory(out, dllLabel, full);
 			}
 		}

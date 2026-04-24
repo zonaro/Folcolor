@@ -6,15 +6,13 @@
 
 </br>
 
-![Foldrion Logo](readme_assets/before_after_header_trans_img_s.png)
+![Foldrion Logo](readme_assets/before_after_header_trans_img_s.png) 
 
-### http://www.foldrion.com  
-
-Coloring your Windows folders can help you organize and increase your productivity. Your folders are instantly recognizable by color vs having to pause to read their text label.  
+Coloring your Windows folders can help you organize and increase your productivity. Your folders are instantly recognizable by color and/or branding vs having to pause to read their text label.  
 
 Especially useful for programmers/developers, artists, power users, etc., that might have dozens of folders and multilevel nested folder trees to manage.  
 
-### Latest release [download](https://github.com/zonaro/Foldrion/releases/)
+### Latest release [download](https://github.com/zonaro/Foldrion/)
 
 ## Installing
 1) Download the Foldrion.exe executable.  
@@ -36,7 +34,8 @@ Foldrion also supports custom icon resources from the installation folder.
 2) Add your custom files under an `icons` subfolder, or use the `Import Icon` button in the app.
 3) Supported import formats are `.ico`, `.dll`, `.jpg`, `.jpeg`, and `.png`.
 4) `.jpg`, `.jpeg`, and `.png` files are converted to `.ico` automatically during import.
-4) Subfolders inside `icons` become nested context submenus automatically.
+5) Each subfolder inside `icons` becomes its own picker category.
+6) Nested folders are shown as hierarchical category names such as `Category - Subcategory`, and each category lists only the icons stored directly in that folder.
  
 
 ## Features
