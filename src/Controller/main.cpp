@@ -1072,6 +1072,11 @@ static void BuildPickerCategories(std::vector<PickerCategory>& out)
 	AddColorsCategory(out, L"Windows 10 Colored", WIN10_ICON_OFFSET);
 	AddColorsCategory(out, L"Windows 7/8 Colored", WIN7_ICON_OFFSET);
 
+	std::wstring iconsRoot = std::wstring(myPathGlobal) + L"icons";
+	DWORD attr = GetFileAttributesW(iconsRoot.c_str());
+	if ((attr != INVALID_FILE_ATTRIBUTES) && (attr & FILE_ATTRIBUTE_DIRECTORY))
+		CollectCustomCategories(out, iconsRoot, iconsRoot);
+
 	std::vector<std::wstring> cachedSystemLibraries;
 	LoadCachedSystemIconLibraryPaths(cachedSystemLibraries);
 	std::vector<std::wstring> seenSystemLibraryNames;
@@ -1088,11 +1093,6 @@ static void BuildPickerCategories(std::vector<PickerCategory>& out)
 		seenSystemLibraryNames.push_back(normalizedName);
 		AddDllCategory(out, BuildCachedSystemIconCategoryLabel(cachedSystemLibraries[i]), cachedSystemLibraries[i]);
 	}
-
-	std::wstring iconsRoot = std::wstring(myPathGlobal) + L"icons";
-	DWORD attr = GetFileAttributesW(iconsRoot.c_str());
-	if ((attr != INVALID_FILE_ATTRIBUTES) && (attr & FILE_ATTRIBUTE_DIRECTORY))
-		CollectCustomCategories(out, iconsRoot, iconsRoot);
 }
 
 

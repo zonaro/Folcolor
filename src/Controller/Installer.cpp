@@ -1293,9 +1293,30 @@ WriteRegSzWOrFail(folderProgIdKey, NULL, L"Foldrion Custom Folder");
 WriteRegSzWOrFail(folderProgIdKey, L"CanUseForDirectory", L"");
 
 HKEY progIdShellKey = CreateSubKeyWOrFail(folderProgIdKey, L"shell");
-UINT order = 0;
-AddCommandItem(progIdShellKey, order, L"Restore Default", exePath,
-    BuildBuiltInCommand(exePath, COLOR_ICON_COUNT), FALSE);
+
+// "Customization" submenu — NeverDefault=1 prevents it from overriding Windows' default Open verb.
+// Uses a named key (not numeric) so no automatic verb ordering conflicts.
+HKEY customizationItemKey = CreateSubKeyWOrFail(progIdShellKey, L"FoldrionCustomization");
+WriteRegSzWOrFail(customizationItemKey, L"MUIVerb", L"Customization");
+WriteRegSzWOrFail(customizationItemKey, L"Icon", exePath);
+WriteRegSzWOrFail(customizationItemKey, L"SubCommands", L"");
+WriteRegDwordWOrFail(customizationItemKey, L"NeverDefault", 1);
+
+HKEY customizationShell = CreateSubKeyWOrFail(customizationItemKey, L"shell");
+RegCloseKey(customizationItemKey);
+
+// Build command for "Customize Folder"
+WCHAR pickCmd[2048];
+if (_snwprintf_s(pickCmd, _countof(pickCmd), (_countof(pickCmd) - 1),
+	L"\"%s\" --pick --folder \"%%1\"", exePath.c_str()) < 1)
+	CRITICAL("Path size limit error!");
+
+UINT customOrder = 0;
+AddCommandItem(customizationShell, customOrder, L"Customize Folder", exePath, pickCmd, FALSE);
+AddCommandItem(customizationShell, customOrder, L"Restore Default", exePath,
+	BuildBuiltInCommand(exePath, COLOR_ICON_COUNT), FALSE);
+
+RegCloseKey(customizationShell);
 RegCloseKey(progIdShellKey);
 RegCloseKey(folderProgIdKey);
 }
