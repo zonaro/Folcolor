@@ -23,7 +23,7 @@ Especially useful for programmers/developers, artists, power users, etc., that m
  
 
 </br>
-Now installed, simply right click on a folder, select "Customize Folder", search and select one of the colors selections.  
+Now installed, simply right click on a folder, select Customization > "Customize Folder", search and select one of the colors selections.  
 
 ## Features
 * Selection of 900+ colors
