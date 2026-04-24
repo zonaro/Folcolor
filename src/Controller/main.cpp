@@ -3605,6 +3605,14 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 					UpdatePickerPreviewLabel(hWnd);
 					UpdatePickerDeleteButtonState(hWnd);
 				}
+				else if (HIWORD(wParam) == LBN_DBLCLK)
+				{
+					SendMessageW(
+						hWnd,
+						WM_COMMAND,
+						MAKEWPARAM(IDC_PICKER_APPLY, BN_CLICKED),
+						(LPARAM) GetDlgItem(hWnd, IDC_PICKER_APPLY));
+				}
 				break;
 
 				case IDC_PICKER_APPLY:
@@ -4140,15 +4148,37 @@ static std::vector<BYTE> LetterboxTo256(const std::vector<BYTE>& pixels, UINT sr
 }
 
 
+/** Build the default DLL file name from the parent folder of the selected items. */
+static std::wstring BuildDefaultPackageDllName(const std::vector<std::wstring>& selectedPaths)
+{
+	if (selectedPaths.empty())
+		return L"PackagedIcons.dll";
+
+	WCHAR folderPath[MAX_PATH] = {};
+	wcsncpy_s(folderPath, selectedPaths[0].c_str(), _TRUNCATE);
+	if (!PathRemoveFileSpecW(folderPath) || !folderPath[0])
+		return L"PackagedIcons.dll";
+
+	std::wstring folderName = PathFindFileNameW(folderPath);
+	folderName = SanitizeIconFileStem(folderName);
+	if (folderName.empty())
+		folderName = L"PackagedIcons";
+
+	return folderName + L".dll";
+}
+
+
 /**
  * Ask the user for a DLL file name and normalize it to a safe *.dll name.
  * Returns FALSE when the user cancels.
  */
-static BOOL PromptPackageDllName(HWND hWnd, const std::wstring& initialDir, std::wstring& outFileName)
+static BOOL PromptPackageDllName(HWND hWnd, const std::wstring& initialDir,
+	const std::wstring& defaultFileName, std::wstring& outFileName)
 {
 	outFileName.clear();
 
-	WCHAR fileName[MAX_PATH] = L"PackagedIcons.dll";
+	WCHAR fileName[MAX_PATH] = {};
+	wcsncpy_s(fileName, defaultFileName.empty() ? L"PackagedIcons.dll" : defaultFileName.c_str(), _TRUNCATE);
 	static const WCHAR kDllFilter[] =
 		L"DLL files (*.dll)\0*.dll\0"
 		L"All files (*.*)\0*.*\0\0";
@@ -4254,7 +4284,8 @@ static void PackageIconsIntoDll(HWND hWnd)
 	}
 
 	std::wstring requestedDllName;
-	if (!PromptPackageDllName(hWnd, iconsDir, requestedDllName))
+	std::wstring defaultDllName = BuildDefaultPackageDllName(selectedPaths);
+	if (!PromptPackageDllName(hWnd, iconsDir, defaultDllName, requestedDllName))
 		return;
 
 	std::wstring dllPath = MakeUniqueDestinationPathMain(iconsDir, requestedDllName);
