@@ -126,7 +126,6 @@
   <ItemGroup>
     <Image Include="Resources\app.ico" />
     <Image Include="Resources\filler1.ico" />
-    <Image Include="resources\icon1.ico" />
     <Image Include="Resources\main_back.bmp" />
     <Image Include="Resources\Win10set\Black.ico" />
     <Image Include="Resources\Win10set\Blue gray.ico" />

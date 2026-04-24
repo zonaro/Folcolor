@@ -4177,6 +4177,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
 				if (folderArg)
 				{
+					MigrateLegacyFolderIconIndex((LPWSTR) folderArg);
+
 					if (builtInIndex >= 0)
 						SetFolderColor(builtInIndex, (LPWSTR) folderArg);
 					else if (resourceArg && resourceArg[0])

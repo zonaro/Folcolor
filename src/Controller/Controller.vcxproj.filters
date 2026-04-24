@@ -43,9 +43,6 @@
     <Image Include="Resources\Win10set\Green.ico">
       <Filter>Resource Files\Win10set</Filter>
     </Image>
-    <Image Include="resources\icon1.ico">
-      <Filter>Resource Files\Win10set</Filter>
-    </Image>
     <Image Include="Resources\Win10set\Lime.ico">
       <Filter>Resource Files\Win10set</Filter>
     </Image>

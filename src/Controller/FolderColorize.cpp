@@ -8,63 +8,41 @@
 extern WCHAR myPathGlobal[MAX_PATH];
 extern int iconOffsetGlobal;
 
+// Legacy embedded ranges from old 14-color builds.
+static const int LEGACY_WIN10_OFFSET = 2;
+static const int LEGACY_WIN78_OFFSET = 16;
+static const int LEGACY_WIN11_OFFSET = 30;
+static const int LEGACY_COLOR_ICON_COUNT = 14;
+
 
 /**
-Desktop.ini-based folder verbs require the file to be stored as Unicode.
-Convert ANSI/UTF-8 desktop.ini files to UTF-16LE with BOM after updates.
+Try to map a legacy built-in icon index to the current icon index range.
+Returns TRUE and writes outNewIndex when a known legacy index is detected.
 */
-static void EnsureDesktopIniIsUnicode(LPCWSTR initPath)
+static BOOL TryMapLegacyBuiltInIndex(int oldIndex, int* outNewIndex)
 {
-	if (!initPath || !initPath[0])
-		return;
+	if (!outNewIndex)
+		return FALSE;
 
-	FILE* fp = NULL;
-	errno_t err = _wfopen_s(&fp, initPath, L"rb");
-	if ((err != 0) || !fp)
-		return;
-
-	long size = fsize(fp);
-	if (size <= 0)
+	if ((oldIndex >= LEGACY_WIN10_OFFSET) && (oldIndex < (LEGACY_WIN10_OFFSET + LEGACY_COLOR_ICON_COUNT)))
 	{
-		fclose(fp);
-		return;
+		*outNewIndex = WIN10_ICON_OFFSET + (oldIndex - LEGACY_WIN10_OFFSET);
+		return TRUE;
 	}
 
-	std::vector<BYTE> raw((size_t) size);
-	if (fread_s(raw.data(), raw.size(), raw.size(), 1, fp) != 1)
+	if ((oldIndex >= LEGACY_WIN78_OFFSET) && (oldIndex < (LEGACY_WIN78_OFFSET + LEGACY_COLOR_ICON_COUNT)))
 	{
-		fclose(fp);
-		return;
-	}
-	fclose(fp);
-
-	if ((raw.size() >= 2) && (raw[0] == 0xFF) && (raw[1] == 0xFE))
-		return;
-
-	UINT codePage = CP_ACP;
-	size_t offset = 0;
-	if ((raw.size() >= 3) && (raw[0] == 0xEF) && (raw[1] == 0xBB) && (raw[2] == 0xBF))
-	{
-		codePage = CP_UTF8;
-		offset = 3;
+		*outNewIndex = WIN7_ICON_OFFSET + (oldIndex - LEGACY_WIN78_OFFSET);
+		return TRUE;
 	}
 
-	int wideLen = MultiByteToWideChar(codePage, 0, (LPCCH) (raw.data() + offset), (int) (raw.size() - offset), NULL, 0);
-	if (wideLen <= 0)
-		return;
+	if ((oldIndex >= LEGACY_WIN11_OFFSET) && (oldIndex < (LEGACY_WIN11_OFFSET + LEGACY_COLOR_ICON_COUNT)))
+	{
+		*outNewIndex = WIN11_ICON_OFFSET + (oldIndex - LEGACY_WIN11_OFFSET);
+		return TRUE;
+	}
 
-	std::vector<WCHAR> wide((size_t) wideLen);
-	if (MultiByteToWideChar(codePage, 0, (LPCCH) (raw.data() + offset), (int) (raw.size() - offset), wide.data(), wideLen) <= 0)
-		return;
-
-	err = _wfopen_s(&fp, initPath, L"wb");
-	if ((err != 0) || !fp)
-		return;
-
-	const BYTE bom[2] = { 0xFF, 0xFE };
-	fwrite(bom, sizeof(bom), 1, fp);
-	fwrite(wide.data(), sizeof(WCHAR), wide.size(), fp);
-	fclose(fp);
+	return FALSE;
 }
 
 
@@ -175,7 +153,6 @@ static void RestoreFolderIcon(LPWSTR widePath)
 				WritePrivateProfileStringW(L".ShellClassInfo", L"IconIndex", NULL, initPath);
 				WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", NULL, initPath);
 				ClearFoldrionDirectoryClass(initPath);
-				EnsureDesktopIniIsUnicode(initPath);
 
 				// If there no fields left now in the ".ShellClassInfo" section remove it from the desktop.ini
 				WCHAR buffer[1024];
@@ -200,6 +177,65 @@ static void RestoreFolderIcon(LPWSTR widePath)
 			PathUnmakeSystemFolderW(widePath);
 		}
 	}
+}
+
+
+/**
+Migrate legacy Foldrion/Folcolor desktop.ini icon indices (14-color era) to
+the current embedded index ranges. This keeps old customized folders aligned
+after resource table expansions.
+*/
+void MigrateLegacyFolderIconIndex(LPWSTR folderPath)
+{
+	if (!folderPath || !folderPath[0])
+		return;
+
+	DWORD attr = GetFileAttributesW(folderPath);
+	if ((attr == INVALID_FILE_ATTRIBUTES) || !(attr & FILE_ATTRIBUTE_DIRECTORY))
+		return;
+
+	WCHAR initPath[MAX_PATH] = {};
+	if (_snwprintf_s(initPath, MAX_PATH, (MAX_PATH - 1), L"%s\\desktop.ini", folderPath) < 1)
+		return;
+
+	DWORD iniAttr = GetFileAttributesW(initPath);
+	if ((iniAttr == INVALID_FILE_ATTRIBUTES) || (iniAttr & FILE_ATTRIBUTE_DIRECTORY))
+		return;
+
+	SHFOLDERCUSTOMSETTINGS pfcs = {};
+	pfcs.dwSize = sizeof(SHFOLDERCUSTOMSETTINGS);
+	pfcs.dwMask = FCSM_ICONFILE;
+
+	WCHAR iconPath[MAX_PATH] = {};
+	pfcs.pszIconFile = iconPath;
+	pfcs.cchIconFile = MAX_PATH;
+
+	if (FAILED(SHGetSetFolderCustomSettings(&pfcs, folderPath, FCS_READ)))
+		return;
+
+	if (!iconPath[0])
+		return;
+
+	WCHAR lowerPath[MAX_PATH] = {};
+	if (wcscpy_s(lowerPath, _countof(lowerPath), iconPath) != 0)
+		return;
+	if (_wcslwr_s(lowerPath) != 0)
+		return;
+
+	if (!StrStrIW(lowerPath, L"\\foldrion.exe") && !StrStrIW(lowerPath, L"\\folcolor.exe"))
+		return;
+
+	int mappedIndex = 0;
+	if (!TryMapLegacyBuiltInIndex(pfcs.iIconIndex, &mappedIndex))
+		return;
+
+	WCHAR iconResource[MAX_PATH + 16] = {};
+	if (_snwprintf_s(iconResource, _countof(iconResource), (_countof(iconResource) - 1), L"%s,%d", iconPath, mappedIndex) < 1)
+		return;
+
+	WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", iconResource, initPath);
+	SetFoldrionDirectoryClass(initPath);
+	PathMakeSystemFolderW(folderPath);
 }
 
 
@@ -287,7 +323,6 @@ void SetFolderColor(int index, LPWSTR folderPath)
 			_snwprintf_s(iconPath, MAX_PATH, (MAX_PATH-1), L"%sFoldrion.exe,%d", myPathGlobal, (index + iconOffsetGlobal));
 			WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", iconPath, initPath);
 			SetFoldrionDirectoryClass(initPath);
-			EnsureDesktopIniIsUnicode(initPath);
 
 			// Flush icon cache so the new icon setting take effect eventually
 			PathMakeSystemFolderW(folderPath);
@@ -315,7 +350,6 @@ void SetFolderColor(int index, LPWSTR folderPath)
 		CRITICAL_API_FAIL(SHGetSetFolderCustomSettings, HRESULT_CODE(hr));
 
 	SetFoldrionDirectoryClass(initPath);
-	EnsureDesktopIniIsUnicode(initPath);
 }
 
 
@@ -394,7 +428,6 @@ void SetFolderIconResource(LPCWSTR iconResourcePath, int iconIndex, LPWSTR folde
 			// Write our "IconResource" entry
 			WritePrivateProfileStringW(L".ShellClassInfo", L"IconResource", iconResource, initPath);
 			SetFoldrionDirectoryClass(initPath);
-			EnsureDesktopIniIsUnicode(initPath);
 
 			// Flush icon cache so the new icon setting take effect eventually
 			PathMakeSystemFolderW(folderPath);
@@ -417,7 +450,6 @@ void SetFolderIconResource(LPCWSTR iconResourcePath, int iconIndex, LPWSTR folde
 		CRITICAL_API_FAIL(SHGetSetFolderCustomSettings, HRESULT_CODE(hr));
 
 	SetFoldrionDirectoryClass(initPath);
-	EnsureDesktopIniIsUnicode(initPath);
 }
 
 

@@ -1043,15 +1043,9 @@ WriteRegSzWOrFail(folderProgIdKey, NULL, L"Foldrion Custom Folder");
 WriteRegSzWOrFail(folderProgIdKey, L"CanUseForDirectory", L"");
 
 HKEY progIdShellKey = CreateSubKeyWOrFail(folderProgIdKey, L"shell");
-    HKEY restoreVerbKey = CreateSubKeyWOrFail(progIdShellKey, L"RestoreDefault");
-    WriteRegSzWOrFail(restoreVerbKey, L"MUIVerb", L"Restore Default");
-    WriteRegSzWOrFail(restoreVerbKey, L"Icon", exePath);
-    WriteRegSzWOrFail(restoreVerbKey, L"MultiSelectModel", L"Single");
-
-    HKEY restoreCommandKey = CreateSubKeyWOrFail(restoreVerbKey, L"command");
-    WriteRegSzWOrFail(restoreCommandKey, NULL, BuildBuiltInCommand(exePath, COLOR_ICON_COUNT));
-    RegCloseKey(restoreCommandKey);
-    RegCloseKey(restoreVerbKey);
+UINT order = 0;
+AddCommandItem(progIdShellKey, order, L"Restore Default", exePath,
+    BuildBuiltInCommand(exePath, COLOR_ICON_COUNT), FALSE);
 RegCloseKey(progIdShellKey);
 RegCloseKey(folderProgIdKey);
 }
