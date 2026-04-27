@@ -211,6 +211,36 @@ static BOOL OpenDirectoryInExplorer(LPCWSTR folderPath)
 }
 
 /**
+ * Launch the installed executable so it can rebuild the icon cache in the background.
+ */
+static BOOL StartBackgroundIconCacheScan()
+{
+	WCHAR installedExePath[MAX_PATH] = {};
+	BuildInstalledExePath(installedExePath, _countof(installedExePath));
+	if (!installedExePath[0] || (GetFileAttributesW(installedExePath) == INVALID_FILE_ATTRIBUTES))
+		return FALSE;
+
+	WCHAR cmdLine[2048] = {};
+	if (_snwprintf_s(cmdLine, _countof(cmdLine), (_countof(cmdLine) - 1), L"\"%s\" --rebuild-icon-cache", installedExePath) < 1)
+		CRITICAL("Path size limit error!");
+
+	STARTUPINFOW si = {};
+	si.cb = sizeof(si);
+	si.dwFlags = STARTF_USESHOWWINDOW;
+	si.wShowWindow = SW_MINIMIZE;
+
+	PROCESS_INFORMATION pi = {};
+	BOOL ok = CreateProcessW(installedExePath, cmdLine, NULL, NULL, FALSE, CREATE_NEW_PROCESS_GROUP, NULL, myPathGlobal, &si, &pi);
+	if (ok)
+	{
+		CloseHandle(pi.hThread);
+		CloseHandle(pi.hProcess);
+	}
+
+	return ok;
+}
+
+/**
  * Ensure a directory exists by creating it when missing.
  */
 static BOOL EnsureDirectoryExists(LPCWSTR folderPath)
@@ -5596,11 +5626,14 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 				{
 					if (!isInstalled)
 					{
-						RunInstallWithProgressWindow(hWnd, FALSE, FALSE);
+						Install();
 						isInstalled = TRUE;
 						SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
 						UpdateInstallDependentControls(hWnd);
-						MessageBoxA(hWnd, "Installation complete.", "Completion:", (MB_OK | MB_ICONASTERISK));
+						if (StartBackgroundIconCacheScan())
+							MessageBoxA(hWnd, "Installation complete. Icon cache scan started in the background.", "Completion:", (MB_OK | MB_ICONASTERISK));
+						else
+							MessageBoxA(hWnd, "Installation complete, but the background icon cache scan could not be started.", "Completion:", (MB_OK | MB_ICONWARNING));
 					}
 					else
 					{
@@ -5630,18 +5663,23 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 				{
 					if (isInstalled && !isRunningOutsideInstallFolder)
 					{
-						RunInstallWithProgressWindow(hWnd, FALSE, TRUE);
+						if (StartBackgroundIconCacheScan())
+							MessageBoxA(hWnd, "Icon cache re-scan started in the background.", "Completion:", (MB_OK | MB_ICONASTERISK));
+						else
+							MessageBoxA(hWnd, "Unable to start the background icon cache re-scan.", "Error:", (MB_OK | MB_ICONERROR));
 						UpdateInstallDependentControls(hWnd);
-						MessageBoxA(hWnd, "Icon cache re-scan complete.", "Completion:", (MB_OK | MB_ICONASTERISK));
 					}
 					else
 					{
-						RunInstallWithProgressWindow(hWnd, TRUE, FALSE);
+						Install();
 						isInstalled = TRUE;
 						isRunningOutsideInstallFolder = FALSE;
 						SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
 						UpdateInstallDependentControls(hWnd);
-						MessageBoxA(hWnd, "Re-installation complete.", "Completion:", (MB_OK | MB_ICONASTERISK));
+						if (StartBackgroundIconCacheScan())
+							MessageBoxA(hWnd, "Re-installation complete. Icon cache scan started in the background.", "Completion:", (MB_OK | MB_ICONASTERISK));
+						else
+							MessageBoxA(hWnd, "Re-installation complete, but the background icon cache scan could not be started.", "Completion:", (MB_OK | MB_ICONWARNING));
 					}
 					return (INT_PTR) TRUE;
 				}
@@ -5801,11 +5839,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 		wchar_t szPath[MAX_PATH];
 		GetCurrentDirectoryW(MAX_PATH, szPath);
 		wcscat_s(szPath, MAX_PATH, L"\\version.txt");
-		FILE* versionFile = _wfopen(szPath, L"w");
-		if (versionFile) {
+		FILE* versionFile = NULL;
+		if ((_wfopen_s(&versionFile, szPath, L"w") == 0) && versionFile) {
 			fprintf(versionFile, "%s", version.c_str());
 			fclose(versionFile);
 		}
+		return EXIT_SUCCESS;
+	}
+
+	if (pCmdLine && (wcsstr(pCmdLine, L"--rebuild-icon-cache") != NULL))
+	{
+		C_ASSERT(_countof(myPathGlobal) >= MAX_PATH);
+		HRESULT hr = SHGetSpecialFolderPathW(0, myPathGlobal, CSIDL_PROGRAM_FILES, FALSE);
+		if (FAILED(hr))
+			CRITICAL_API_FAIL(SHGetSpecialFolderPathW, HRESULT_CODE(hr));
+		if (wcscat_s(myPathGlobal, _countof(myPathGlobal), L"\\" INSTALL_FOLDER L"\\") != 0)
+			CRITICAL("Path size limit error!");
+
+		RebuildSystemIconCacheOnly();
 		return EXIT_SUCCESS;
 	}
 

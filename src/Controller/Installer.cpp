@@ -21,6 +21,8 @@ extern int iconOffsetGlobal;
 
 static InstallDiscoveryProgressCallback gInstallDiscoveryProgressCallback = NULL;
 static void* gInstallDiscoveryProgressUserData = NULL;
+static void CreateStartMenuShortcut();
+static void RemoveStartMenuShortcut();
 
 
 void SetInstallDiscoveryProgressCallback(InstallDiscoveryProgressCallback callback, void* userData)
@@ -378,6 +380,76 @@ WriteSystemIconCacheFile(libraryPaths);
 void RebuildSystemIconCacheOnly()
 {
 RebuildSystemIconCache();
+}
+
+
+/**
+ * Install our shell integration and files, but leave icon cache rebuilding to the caller.
+ */
+static void InstallCore(BOOL rebuildIconCache)
+{
+// Create installation folder
+if (!CreateDirectoryW(myPathGlobal, NULL))
+{
+DWORD gle = GetLastError();
+if (gle != ERROR_ALREADY_EXISTS)
+CRITICAL_API_FAIL(CreateDirectoryW, gle);
+}
+
+// Copy ourself there
+// ------------------------------------------------------------------------
+WCHAR myPath[MAX_PATH];
+if(!GetModuleFileNameW(NULL, myPath, _countof(myPath)))
+CRITICAL_API_FAIL(GetModuleFileNameW, GetLastError());
+
+WCHAR myName[_MAX_FNAME];
+if (!GetModuleBaseNameW(GetCurrentProcess(), NULL, myName, _countof(myName)))
+CRITICAL_API_FAIL(GetModuleBaseNameW, GetLastError());
+WCHAR targetPath[MAX_PATH];
+if(_snwprintf_s(targetPath, _countof(targetPath), _countof(targetPath)-1, L"%s%s", myPathGlobal, myName) < 1)
+CRITICAL("Path size limit error!");
+
+if(!CopyFileW(myPath, targetPath, FALSE))
+CRITICAL_API_FAIL(CopyFileW, GetLastError());
+// ------------------------------------------------------------------------
+
+// And "README.md" file if it exists
+// #TODO: Could have README.md as an embedded resource and extract it on demand
+if (PathRemoveFileSpecW(myPath))
+{
+if (wcscat_s(myPath, _countof(myPath), L"\\README.md") != 0)
+CRITICAL("Path size limit error!");
+
+if (_snwprintf_s(targetPath, _countof(targetPath), _countof(targetPath)-1, L"%sREADME.md", myPathGlobal) < 1)
+CRITICAL("Path size limit error!");
+
+CopyFileW(myPath, targetPath, FALSE);
+}
+
+// Ensure custom icons folder exists
+WCHAR iconsPath[MAX_PATH];
+if (_snwprintf_s(iconsPath, _countof(iconsPath), (_countof(iconsPath) - 1), L"%sicons", myPathGlobal) < 1)
+CRITICAL("Path size limit error!");
+if (!CreateDirectoryW(iconsPath, NULL))
+{
+DWORD gle = GetLastError();
+if (gle != ERROR_ALREADY_EXISTS)
+CRITICAL_API_FAIL(CreateDirectoryW, gle);
+}
+
+if (rebuildIconCache)
+RebuildSystemIconCache();
+
+// ------------------------------------------------------------------------
+
+// TODO: Put UAC trick stuff here
+
+
+// ------------------------------------------------------------------------
+
+CreateStartMenuShortcut();
+
+RefreshInstalledShellMenu();
 }
 
 
@@ -1323,67 +1395,7 @@ void RefreshInstalledShellMenu()
 // Install ourself
 void Install()
 {
-// Create installation folder
-if (!CreateDirectoryW(myPathGlobal, NULL))
-{
-DWORD gle = GetLastError();
-if (gle != ERROR_ALREADY_EXISTS)
-CRITICAL_API_FAIL(CreateDirectoryW, gle);
-}
-
-// Copy ourself there
-// ------------------------------------------------------------------------
-WCHAR myPath[MAX_PATH];
-if(!GetModuleFileNameW(NULL, myPath, _countof(myPath)))
-CRITICAL_API_FAIL(GetModuleFileNameW, GetLastError());
-
-WCHAR myName[_MAX_FNAME];
-if (!GetModuleBaseNameW(GetCurrentProcess(), NULL, myName, _countof(myName)))
-CRITICAL_API_FAIL(GetModuleBaseNameW, GetLastError());
-WCHAR targetPath[MAX_PATH];
-if(_snwprintf_s(targetPath, _countof(targetPath), _countof(targetPath)-1, L"%s%s", myPathGlobal, myName) < 1)
-CRITICAL("Path size limit error!");
-
-if(!CopyFileW(myPath, targetPath, FALSE))
-CRITICAL_API_FAIL(CopyFileW, GetLastError());
-// ------------------------------------------------------------------------
-
-// And "README.md" file if it exists
-// #TODO: Could have README.md as an embedded resource and extract it on demand
-if (PathRemoveFileSpecW(myPath))
-{
-if (wcscat_s(myPath, _countof(myPath), L"\\README.md") != 0)
-CRITICAL("Path size limit error!");
-
-if (_snwprintf_s(targetPath, _countof(targetPath), _countof(targetPath)-1, L"%sREADME.md", myPathGlobal) < 1)
-CRITICAL("Path size limit error!");
-
-CopyFileW(myPath, targetPath, FALSE);
-}
-
-// Ensure custom icons folder exists
-WCHAR iconsPath[MAX_PATH];
-if (_snwprintf_s(iconsPath, _countof(iconsPath), (_countof(iconsPath) - 1), L"%sicons", myPathGlobal) < 1)
-CRITICAL("Path size limit error!");
-if (!CreateDirectoryW(iconsPath, NULL))
-{
-DWORD gle = GetLastError();
-if (gle != ERROR_ALREADY_EXISTS)
-CRITICAL_API_FAIL(CreateDirectoryW, gle);
-}
-
-RebuildSystemIconCache();
-
-// ------------------------------------------------------------------------
-
-// TODO: Put UAC trick stuff here
-
-
-// ------------------------------------------------------------------------
-
-CreateStartMenuShortcut();
-
-RefreshInstalledShellMenu();
+InstallCore(FALSE);
 }
 
 
