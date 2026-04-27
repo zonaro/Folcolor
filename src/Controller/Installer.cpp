@@ -78,6 +78,58 @@ return std::wstring(exePath);
 }
 
 /**
+ * Terminate any other running Foldrion.exe instances so install/update can replace the file.
+ */
+static BOOL StopOtherFoldrionProcesses()
+{
+	const DWORD currentPid = GetCurrentProcessId();
+	PROCESSENTRY32W entry = {};
+	entry.dwSize = sizeof(entry);
+
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (snapshot == INVALID_HANDLE_VALUE)
+		CRITICAL_API_FAIL(CreateToolhelp32Snapshot, GetLastError());
+
+	BOOL success = TRUE;
+	if (Process32FirstW(snapshot, &entry))
+	{
+		do
+		{
+			if (entry.th32ProcessID == currentPid)
+				continue;
+
+			if (_wcsicmp(entry.szExeFile, L"" TARGET_NAME) != 0)
+				continue;
+
+			HANDLE processHandle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, entry.th32ProcessID);
+			if (!processHandle)
+			{
+				success = FALSE;
+				break;
+			}
+
+			if (!TerminateProcess(processHandle, 0))
+			{
+				CloseHandle(processHandle);
+				success = FALSE;
+				break;
+			}
+
+			DWORD waitResult = WaitForSingleObject(processHandle, 10000);
+			CloseHandle(processHandle);
+			if (waitResult != WAIT_OBJECT_0)
+			{
+				success = FALSE;
+				break;
+			}
+		} while (Process32NextW(snapshot, &entry));
+	}
+
+	CloseHandle(snapshot);
+	return success;
+}
+
+/**
  * Create a subkey and fail hard on registry errors.
  */
 static HKEY CreateSubKeyWOrFail(HKEY root, LPCWSTR path)
@@ -401,6 +453,9 @@ CRITICAL_API_FAIL(CreateDirectoryW, gle);
 WCHAR myPath[MAX_PATH];
 if(!GetModuleFileNameW(NULL, myPath, _countof(myPath)))
 CRITICAL_API_FAIL(GetModuleFileNameW, GetLastError());
+
+if (!StopOtherFoldrionProcesses())
+CRITICAL("Unable to stop other running Foldrion.exe processes before installation.");
 
 WCHAR myName[_MAX_FNAME];
 if (!GetModuleBaseNameW(GetCurrentProcess(), NULL, myName, _countof(myName)))
