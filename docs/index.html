@@ -198,6 +198,145 @@
         </div>
       </section>
 
+      <section class="window-showcase">
+        <div class="section-heading">
+          <p class="eyebrow" data-i18n="showcaseEyebrow">See the windows</p>
+          <h2 data-i18n="showcaseTitle">Preview the actual Foldrion workflow before you install it.</h2>
+          <p class="showcase-intro" data-i18n="showcaseText">
+            The home page now includes simplified recreations of the installer, icon picker, and derived icon editor so visitors can understand the app at a glance.
+          </p>
+        </div>
+
+        <div class="showcase-grid">
+          <article class="demo-card">
+            <div class="demo-copy">
+              <p class="card-kicker" data-i18n="installerKicker">Installer</p>
+              <h3 data-i18n="installerTitle">Install, refresh, and manage shell integration.</h3>
+              <p data-i18n="installerText">
+                The native installer window keeps all maintenance actions in one place: install, icon cache refresh, package export, default icon changes, and Explorer restart.
+              </p>
+            </div>
+            <div class="demo-window installer-demo" aria-label="Installer window preview">
+              <div class="demo-window-titlebar">
+                <span>Foldrion</span>
+                <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+              </div>
+              <div class="installer-demo-body">
+                <div class="installer-demo-hero">
+                  <img src="icon.png" alt="Foldrion icon" data-i18n-alt="installerIconAlt">
+                  <h4>Installer Form</h4>
+                  <p data-i18n="installerDemoCaption">Windows shell integration, icon cache tools, and folder icon workflows in one place.</p>
+                </div>
+                <div class="installer-demo-actions">
+                  <span class="demo-panel-title" data-i18n="actionsLabel">Actions</span>
+                  <button class="demo-button demo-button-primary">Install</button>
+                  <button class="demo-button">Refresh Window icons</button>
+                  <button class="demo-button">Open Install Folder</button>
+                  <button class="demo-button">Re-install</button>
+                  <button class="demo-button">Package Icons</button>
+                  <button class="demo-button">Set Default Icon</button>
+                  <button class="demo-button">Restore Default</button>
+                  <button class="demo-button">Restart Explorer</button>
+                  <button class="demo-button">Check Updates</button>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="demo-card">
+            <div class="demo-copy">
+              <p class="card-kicker" data-i18n="pickerKicker">Picker</p>
+              <h3 data-i18n="pickerTitle">Browse categories, search icons, and preview choices.</h3>
+              <p data-i18n="pickerText">
+                The picker is organized into categories, supports search, shows live previews, and exposes import, delete, restore, and derived icon creation actions.
+              </p>
+            </div>
+            <div class="demo-window picker-demo" aria-label="Picker window preview">
+              <div class="demo-window-titlebar">
+                <span>Customize Folder</span>
+                <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+              </div>
+              <div class="picker-demo-body">
+                <div class="picker-column">
+                  <span class="demo-panel-title" data-i18n="categoryLabel">Category</span>
+                  <div class="demo-list">
+                    <div class="demo-list-item active"><span class="demo-swatch blue"></span>Windows 11 Colors</div>
+                    <div class="demo-list-item"><span class="demo-swatch warm"></span>Windows 10 Colors</div>
+                    <div class="demo-list-item"><span class="demo-swatch green"></span>Windows 7/8 Colors</div>
+                    <div class="demo-list-item"><span class="demo-swatch violet"></span>Custom Icons</div>
+                  </div>
+                </div>
+                <div class="picker-column">
+                  <div class="picker-topline">
+                    <span class="demo-panel-title" data-i18n="iconsLabel">Icons</span>
+                    <span class="picker-search" data-i18n="searchLabel">Search</span>
+                  </div>
+                  <div class="picker-searchbox">blue folder</div>
+                  <div class="demo-list">
+                    <div class="demo-list-item active"><span class="demo-swatch blue"></span>Icon 000</div>
+                    <div class="demo-list-item"><span class="demo-swatch blue"></span>Icon 001</div>
+                    <div class="demo-list-item"><span class="demo-swatch blue"></span>Icon 002</div>
+                    <div class="demo-list-item"><span class="demo-swatch blue"></span>Icon 003</div>
+                  </div>
+                </div>
+                <div class="picker-preview">
+                  <span class="demo-panel-title" data-i18n="previewLabel">Preview</span>
+                  <div class="picker-preview-box">
+                    <img src="icon.png" alt="Foldrion icon" data-i18n-alt="pickerPreviewAlt">
+                  </div>
+                  <p data-i18n="pickerPreviewText">Current icon preview</p>
+                </div>
+              </div>
+            </div>
+          </article>
+
+          <article class="demo-card">
+            <div class="demo-copy">
+              <p class="card-kicker" data-i18n="editorKicker">Editor</p>
+              <h3 data-i18n="editorTitle">Compose new icons with layers, transforms, and color controls.</h3>
+              <p data-i18n="editorText">
+                The derived icon editor lets you stack layers on top of a base folder icon, then tune hue, saturation, opacity, scale, position, rotation, and grayscale colorization.
+              </p>
+            </div>
+            <div class="demo-window editor-demo" aria-label="Derived icon editor preview">
+              <div class="demo-window-titlebar">
+                <span>Create Derived Icon</span>
+                <div class="window-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+              </div>
+              <div class="editor-demo-toolbar">
+                <button class="demo-chip" data-i18n="loadBaseLabel">Load Base Icon</button>
+                <button class="demo-chip" data-i18n="addLayerLabel">Add Layer</button>
+              </div>
+              <div class="editor-demo-body">
+                <div class="editor-preview">
+                  <div class="editor-canvas">
+                    <img class="editor-base" src="icon.png" alt="Foldrion icon" data-i18n-alt="editorPreviewAlt">
+                    <div class="editor-overlay"></div>
+                  </div>
+                </div>
+                <div class="editor-layers">
+                  <span class="demo-panel-title" data-i18n="layersLabel">Layers</span>
+                  <div class="demo-list">
+                    <div class="demo-list-item active">Base Icon (Fixed)</div>
+                    <div class="demo-list-item">Spark Overlay</div>
+                    <div class="demo-list-item">Color Glow</div>
+                  </div>
+                </div>
+                <div class="editor-controls">
+                  <span class="demo-panel-title" data-i18n="controlsLabel">Controls</span>
+                  <div class="control-row"><span>Hue</span><strong>24</strong></div>
+                  <div class="control-row"><span>Saturation</span><strong>140%</strong></div>
+                  <div class="control-row"><span>Opacity</span><strong>92%</strong></div>
+                  <div class="control-row"><span>Scale</span><strong>118%</strong></div>
+                  <div class="control-row"><span>Position X</span><strong>8</strong></div>
+                  <div class="control-row"><span>Rotation</span><strong>16°</strong></div>
+                </div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
       <section class="steps">
         <div class="section-heading">
           <p class="eyebrow" data-i18n="stepsEyebrow">Quick start</p>

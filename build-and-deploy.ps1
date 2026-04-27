@@ -96,18 +96,20 @@ try {
 
     # Write version to version.txt
     Push-Location (Split-Path -Parent $exePath)
-    & $exePath --version
-    $versionFilePath = Join-Path (Get-Location) "version.txt"
-    if (Test-Path -LiteralPath $versionFilePath) {
-        $version = Get-Content -Path $versionFilePath -Raw
-        Pop-Location
-        $version | Out-File -FilePath (Join-Path $PSScriptRoot "version.txt") -Encoding UTF8
-        Remove-Item -Path $versionFilePath -Force
-        Write-Host "[VERSION] $version written to version.txt" -ForegroundColor Green
+    & $exePath --version 
+
+    #delete build temp directory, and foldrion.pdb if it exists
+    $buildPath = Join-Path (Split-Path -Parent $exePath) "build"
+    if (Test-Path -LiteralPath $buildPath) {
+        Remove-Item -Path $buildPath -Recurse -Force
+        Write-Host '[CLEANUP] Build temp directory removed.' -ForegroundColor Green
     }
-    else {
-        Pop-Location
+    $pdbPath = Join-Path (Split-Path -Parent $exePath) "Foldrion.pdb"
+    if (Test-Path -LiteralPath $pdbPath) {
+        Remove-Item -Path $pdbPath -Force
+        Write-Host '[CLEANUP] PDB file removed.' -ForegroundColor Green
     }
+  
 }
 catch {
     Write-Error $_

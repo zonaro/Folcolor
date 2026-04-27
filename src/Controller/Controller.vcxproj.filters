@@ -79,9 +79,6 @@
     <Image Include="Resources\filler1.ico">
       <Filter>Resource Files</Filter>
     </Image>
-    <Image Include="Resources\main_back.bmp">
-      <Filter>Resource Files</Filter>
-    </Image>
     <Image Include="Resources\Win10set\Yellow.ico">
       <Filter>Resource Files\Win10set</Filter>
     </Image>

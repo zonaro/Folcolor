@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|Win32">
@@ -67,7 +67,8 @@
       <FloatingPointModel>Fast</FloatingPointModel>
     </ClCompile>
     <PreBuildEvent>
-      <Command></Command>
+      <Command>
+      </Command>
     </PreBuildEvent>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -93,7 +94,8 @@
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
     <PreBuildEvent>
-      <Command></Command>
+      <Command>
+      </Command>
     </PreBuildEvent>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -126,7 +128,6 @@
   <ItemGroup>
     <Image Include="Resources\app.ico" />
     <Image Include="Resources\filler1.ico" />
-    <Image Include="Resources\main_back.bmp" />
     <Image Include="Resources\Win10set\Black.ico" />
     <Image Include="Resources\Win10set\Blue gray.ico" />
     <Image Include="Resources\Win10set\Blue.ico" />
