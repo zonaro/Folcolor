@@ -1,0 +1,37 @@
+# Foldrion
+
+Foldrion is a free and open source Windows application for customizing folder icons with colors, image overlays, and icon packs.
+
+## Project Links
+
+- Website: https://zonaro.github.io/Foldrion/
+- Repository: https://github.com/zonaro/Foldrion
+- Download: https://raw.githubusercontent.com/zonaro/Foldrion/refs/heads/main/src/Controller/Win32/Release/Foldrion.exe
+
+## Key Features
+
+- Customize Windows folder icons with more than 900 color variations.
+- Import `.ico`, `.dll`, `.png`, `.jpg`, and `.jpeg` files.
+- Create composite folder icons by overlaying images on colored folders.
+- Export icon collections as DLL packs.
+- Works on Windows 7, 8, 10, and 11.
+- Free, open source, MIT licensed, and designed with minimal system surface area.
+
+## Audience
+
+- Windows power users
+- Developers
+- Artists and designers
+- Users who organize many folders and projects visually
+
+## Language Availability
+
+- English
+- Portuguese (Brazil)
+
+## Canonical Source
+
+If there is any discrepancy, prefer the GitHub repository and the README as the authoritative source:
+
+- https://github.com/zonaro/Foldrion
+- https://github.com/zonaro/Foldrion/blob/main/README.md
