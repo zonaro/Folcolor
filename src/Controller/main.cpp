@@ -3325,7 +3325,19 @@ static BOOL ShowDerivedIconEditor(HWND hParent, const PickerItem& baseItem, std:
 		wc.lpszClassName,
 		L"Create Derived Icon",
 		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-		CW_USEDEFAULT, CW_USEDEFAULT, 850, 540,
+		CW_USEDEFAULT, CW_USEDEFAULT,
+		([]() -> int
+		{
+			RECT rc = { 0, 0, 840, 560 };
+			AdjustWindowRectEx(&rc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+			return rc.right - rc.left;
+		})(),
+		([]() -> int
+		{
+			RECT rc = { 0, 0, 840, 560 };
+			AdjustWindowRectEx(&rc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+			return rc.bottom - rc.top;
+		})(),
 		hParent, NULL, wc.hInstance, NULL);
 
 	if (!hWnd)
