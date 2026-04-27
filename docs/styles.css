@@ -175,14 +175,15 @@ body::after {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+  width: 100%;
   padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
   cursor: pointer;
-  list-style: none;
+  font: inherit;
   font-weight: 600;
-}
-
-.icon-pack-summary::-webkit-details-marker {
-  display: none;
+  text-align: left;
 }
 
 .icon-pack-summary::after {
@@ -192,7 +193,7 @@ body::after {
   line-height: 1;
 }
 
-.icon-pack-group[open] .icon-pack-summary::after {
+.icon-pack-summary[aria-expanded="true"]::after {
   content: "-";
 }
 

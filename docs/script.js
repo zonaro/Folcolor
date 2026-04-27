@@ -300,16 +300,19 @@ function renderIconPacks() {
   statusElement.hidden = true;
 
   iconPacks.forEach((pack) => {
-    const details = document.createElement("details");
-    details.className = "icon-pack-group";
+    const group = document.createElement("div");
+    group.className = "icon-pack-group";
 
-    const summary = document.createElement("summary");
+    const summary = document.createElement("button");
+    summary.type = "button";
     summary.className = "icon-pack-summary";
     summary.textContent = pack.name;
-    details.appendChild(summary);
+    summary.setAttribute("aria-expanded", "false");
+    group.appendChild(summary);
 
     const files = document.createElement("div");
     files.className = "icon-pack-files";
+    files.hidden = true;
 
     if (pack.files.length === 0) {
       const empty = document.createElement("p");
@@ -337,8 +340,8 @@ function renderIconPacks() {
       });
     }
 
-    details.appendChild(files);
-    listElement.appendChild(details);
+    group.appendChild(files);
+    listElement.appendChild(group);
   });
 }
 
@@ -509,6 +512,20 @@ if (iconPacksTrigger && iconPacksDropdown && iconPacksMenu) {
 
 if (iconPacksList) {
   iconPacksList.addEventListener("click", async (event) => {
+    const summary = event.target.closest(".icon-pack-summary");
+    if (summary) {
+      const group = summary.closest(".icon-pack-group");
+      const files = group ? group.querySelector(".icon-pack-files") : null;
+      const isExpanded = summary.getAttribute("aria-expanded") === "true";
+
+      if (files) {
+        summary.setAttribute("aria-expanded", String(!isExpanded));
+        files.hidden = isExpanded;
+      }
+
+      return;
+    }
+
     const button = event.target.closest(".icon-pack-download");
     if (!button) {
       return;
