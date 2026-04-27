@@ -67,6 +67,17 @@ function Stop-FoldrionProcess {
     }
 }
 
+function Get-FoldrionVersionString {
+    [CmdletBinding()]
+    param()
+
+    $now = Get-Date
+    $year = $now.ToString('yy')
+    $dayOfYear = $now.DayOfYear.ToString('000')
+    $hourMinute = $now.ToString('HHmm')
+    return "v1.$year.$dayOfYear.$hourMinute"
+}
+
 try {
     $workspaceRoot = Split-Path -Parent $PSCommandPath
     $projectPath = Join-Path $workspaceRoot 'src\Controller\Controller.vcxproj'
@@ -101,9 +112,10 @@ try {
   
     Write-Host '[OK] Build concluido.' -ForegroundColor Green
 
-    # Write version to version.txt
+    # Write version to version.txt without invoking the freshly built EXE.
     Push-Location (Split-Path -Parent $exePath)
-    & $exePath --version 
+    $versionPath = Join-Path (Get-Location) 'version.txt'
+    Set-Content -LiteralPath $versionPath -Value (Get-FoldrionVersionString) -NoNewline -Encoding ASCII
 
     #delete build temp directory, and foldrion.pdb if it exists
     $buildPath = Join-Path (Split-Path -Parent $exePath) "build"

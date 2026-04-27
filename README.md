@@ -32,6 +32,7 @@ Now installed, simply right click on a folder, select Customization > "Customize
 * Create your own custom icon packs by adding files to the `icons` folder in the installation directory.  
 * Create derived icons by applying a image over a colored folder icon. For example, you can create a "Red Folder with Star" icon by applying a star image over the red folder icon.
 * Create your own DLL icon packs directly from the program by selecting many `.ico`, `.png` or `.jpg` files and exporting them as a single `.dll` file.
+* The installer focuses on app maintenance tasks such as install, refresh window icons, open the install folder, re-install, package icons, and check updates.
 * 100% Free Open Source. You can known what it's made of and freely modify, remove, or add features to it.  
 * Minimalist, systems-level designed. Consists of a single executable with an embedded icons resource.  
 * Secure design: Absolute minimal API usage, using zero network calls. No adware, no nag screens, data collection, and doesn't use a vulnerable Explorer shell extension like others do.  

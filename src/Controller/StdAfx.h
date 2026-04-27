@@ -93,4 +93,7 @@ void RefreshInstalledShellMenu();
 
 typedef void (*InstallDiscoveryProgressCallback)(LPCWSTR foundLibraryPath, void* userData);
 void SetInstallDiscoveryProgressCallback(InstallDiscoveryProgressCallback callback, void* userData);
+void ResetInstallDiscoveryCancel();
+void RequestInstallDiscoveryCancel();
+BOOL IsInstallDiscoveryCancelRequested();
 void RebuildSystemIconCacheOnly();

@@ -76,7 +76,6 @@ static void ClearFoldrionDirectoryClass(LPCWSTR initPath)
 	WritePrivateProfileStringW(L".ShellClassInfo", L"DirectoryClass", NULL, initPath);
 }
 
-
 // Restore default folder icon by removing the folder "desktop.ini"
 static void RestoreFolderIcon(LPWSTR widePath)
 {
@@ -237,7 +236,6 @@ void MigrateLegacyFolderIconIndex(LPWSTR folderPath)
 	SetFoldrionDirectoryClass(initPath);
 	PathMakeSystemFolderW(folderPath);
 }
-
 
 // Set folder color icon for a given folder
 void SetFolderColor(int index, LPWSTR folderPath)
@@ -463,66 +461,4 @@ void ResetWindowsIconCache()
 	DWORD_PTR smResult;
 	SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM) L"Software\\Classes", SMTO_ABORTIFHUNG, 5000, &smResult);
 	SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM) L"Shell Icons", SMTO_ABORTIFHUNG, 5000, &smResult);
-}
-
-
-static const WCHAR* kShellIconsKeyPath = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Icons";
-
-static BOOL WriteShellIconOverride(HKEY hKey, LPCWSTR valueName, LPCWSTR iconPath)
-{
-	if (!hKey || !valueName || !valueName[0] || !iconPath || !iconPath[0])
-		return FALSE;
-
-	LSTATUS status = RegSetValueExW(hKey, valueName, 0, REG_SZ, (const BYTE*) iconPath, (DWORD) ((wcslen(iconPath) + 1) * sizeof(WCHAR)));
-	return (status == ERROR_SUCCESS);
-}
-
-
-// Set the system-wide default folder icon by modifying the Shell Icons registry key
-BOOL SetSystemDefaultFolderIcon(LPCWSTR iconResourcePath, int iconIndex)
-{
-	if (!iconResourcePath || !iconResourcePath[0] || (iconIndex < 0))
-		return FALSE;
-
-	HKEY hKey;
-	LSTATUS status = RegCreateKeyExW(HKEY_CURRENT_USER, kShellIconsKeyPath, 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
-	if (status != ERROR_SUCCESS)
-		return FALSE;
-
-	WCHAR iconPath[1024];
-	swprintf_s(iconPath, _countof(iconPath), L"%s,%d", iconResourcePath, iconIndex);
-
-	BOOL wroteClosedFolder = WriteShellIconOverride(hKey, L"3", iconPath);
-	BOOL wroteOpenFolder = WriteShellIconOverride(hKey, L"4", iconPath);
-	RegCloseKey(hKey);
-
-	if (wroteClosedFolder && wroteOpenFolder)
-	{
-		ResetWindowsIconCache();
-		return TRUE;
-	}
-
-	return FALSE;
-}
-
-
-// Restore the system-wide default folder icon by removing the Shell Icons registry key
-BOOL RestoreSystemDefaultFolderIcon()
-{
-	HKEY hKey;
-	LSTATUS status = RegOpenKeyExW(HKEY_CURRENT_USER, kShellIconsKeyPath, 0, KEY_WRITE, &hKey);
-	if (status != ERROR_SUCCESS)
-		return FALSE;
-
-	LSTATUS deleteClosedStatus = RegDeleteValueW(hKey, L"3");
-	LSTATUS deleteOpenStatus = RegDeleteValueW(hKey, L"4");
-	RegCloseKey(hKey);
-
-	if ((deleteClosedStatus != ERROR_SUCCESS) && (deleteClosedStatus != ERROR_FILE_NOT_FOUND))
-		return FALSE;
-	if ((deleteOpenStatus != ERROR_SUCCESS) && (deleteOpenStatus != ERROR_FILE_NOT_FOUND))
-		return FALSE;
-
-	ResetWindowsIconCache();
-	return TRUE;
 }

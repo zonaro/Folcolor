@@ -21,6 +21,7 @@ extern int iconOffsetGlobal;
 
 static InstallDiscoveryProgressCallback gInstallDiscoveryProgressCallback = NULL;
 static void* gInstallDiscoveryProgressUserData = NULL;
+static volatile LONG gInstallDiscoveryCancelRequested = FALSE;
 static void CreateStartMenuShortcut();
 static void RemoveStartMenuShortcut();
 
@@ -29,6 +30,21 @@ void SetInstallDiscoveryProgressCallback(InstallDiscoveryProgressCallback callba
 {
 gInstallDiscoveryProgressCallback = callback;
 gInstallDiscoveryProgressUserData = userData;
+}
+
+void ResetInstallDiscoveryCancel()
+{
+InterlockedExchange(&gInstallDiscoveryCancelRequested, FALSE);
+}
+
+void RequestInstallDiscoveryCancel()
+{
+InterlockedExchange(&gInstallDiscoveryCancelRequested, TRUE);
+}
+
+BOOL IsInstallDiscoveryCancelRequested()
+{
+return (InterlockedCompareExchange(&gInstallDiscoveryCancelRequested, FALSE, FALSE) != FALSE);
 }
 
 
@@ -336,19 +352,23 @@ return ((_wcsicmp(ext, L".dll") == 0) || (_wcsicmp(ext, L".exe") == 0));
 /**
  * Discover Windows DLL/EXE files that contain at least one icon.
  */
-static void DiscoverSystemIconLibraryPaths(std::vector<std::wstring>& outPaths)
+static BOOL DiscoverSystemIconLibraryPaths(std::vector<std::wstring>& outPaths)
 {
 outPaths.clear();
+ResetInstallDiscoveryCancel();
 
 std::wstring windowsRoot = GetWindowsRootPath();
 if (windowsRoot.empty())
-return;
+return FALSE;
 
 std::vector<std::wstring> directories;
 directories.push_back(windowsRoot);
 
 while (!directories.empty())
 {
+if (IsInstallDiscoveryCancelRequested())
+return FALSE;
+
 std::wstring dirPath = directories.back();
 directories.pop_back();
 
@@ -360,6 +380,12 @@ continue;
 
 do
 {
+if (IsInstallDiscoveryCancelRequested())
+{
+FindClose(hFind);
+return FALSE;
+}
+
 if ((wcscmp(fd.cFileName, L".") == 0) || (wcscmp(fd.cFileName, L"..") == 0))
 continue;
 
@@ -397,6 +423,8 @@ return (byName < 0);
 
 return (_wcsicmp(left.c_str(), right.c_str()) < 0);
 });
+
+return !IsInstallDiscoveryCancelRequested();
 }
 
 
@@ -421,11 +449,14 @@ fclose(fp);
 /**
  * Rebuild the Windows icon library cache used by the runtime picker.
  */
-static void RebuildSystemIconCache()
+static BOOL RebuildSystemIconCache()
 {
 std::vector<std::wstring> libraryPaths;
-DiscoverSystemIconLibraryPaths(libraryPaths);
+if (!DiscoverSystemIconLibraryPaths(libraryPaths))
+return FALSE;
+
 WriteSystemIconCacheFile(libraryPaths);
+return TRUE;
 }
 
 

@@ -104,115 +104,6 @@ static BOOL FindDoppelganger()
 	return found;
 }
 
-static std::vector<DWORD> GetExplorerProcessIds()
-{
-	std::vector<DWORD> explorerPids;
-	PROCESSENTRY32W entry = {};
-	entry.dwSize = sizeof(entry);
-
-	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	if (snapshot == INVALID_HANDLE_VALUE)
-		return explorerPids;
-
-	if (Process32FirstW(snapshot, &entry))
-	{
-		do
-		{
-			if (_wcsicmp(entry.szExeFile, L"explorer.exe") == 0)
-				explorerPids.push_back(entry.th32ProcessID);
-		} while (Process32NextW(snapshot, &entry));
-	}
-
-	CloseHandle(snapshot);
-	return explorerPids;
-}
-
-static BOOL WaitForExplorerExit(const std::vector<DWORD> &explorerPids, DWORD timeoutMs)
-{
-	DWORD startTick = GetTickCount();
-	for (;;)
-	{
-		BOOL anyStillRunning = FALSE;
-		for (size_t i = 0; i < explorerPids.size(); ++i)
-		{
-			HANDLE processHandle = OpenProcess(SYNCHRONIZE, FALSE, explorerPids[i]);
-			if (!processHandle)
-				continue;
-
-			DWORD waitResult = WaitForSingleObject(processHandle, 0);
-			CloseHandle(processHandle);
-			if (waitResult == WAIT_TIMEOUT)
-			{
-				anyStillRunning = TRUE;
-				break;
-			}
-		}
-
-		if (!anyStillRunning)
-			return TRUE;
-
-		if (GetTickCount() - startTick >= timeoutMs)
-			return FALSE;
-
-		Sleep(200);
-	}
-}
-
-static BOOL WaitForNewExplorerProcess(const std::vector<DWORD> &previousPids, DWORD timeoutMs)
-{
-	DWORD startTick = GetTickCount();
-	for (;;)
-	{
-		std::vector<DWORD> currentPids = GetExplorerProcessIds();
-		for (size_t i = 0; i < currentPids.size(); ++i)
-		{
-			if (std::find(previousPids.begin(), previousPids.end(), currentPids[i]) == previousPids.end())
-				return TRUE;
-		}
-
-		if (previousPids.empty() && !currentPids.empty())
-			return TRUE;
-
-		if (GetTickCount() - startTick >= timeoutMs)
-			return FALSE;
-
-		Sleep(200);
-	}
-}
-
-static BOOL RestartExplorerProcess()
-{
-	std::vector<DWORD> explorerPids = GetExplorerProcessIds();
-	BOOL terminatedAnyProcess = FALSE;
-
-	for (size_t i = 0; i < explorerPids.size(); ++i)
-	{
-		HANDLE processHandle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, explorerPids[i]);
-		if (!processHandle)
-			continue;
-
-		if (TerminateProcess(processHandle, 0))
-			terminatedAnyProcess = TRUE;
-
-		CloseHandle(processHandle);
-	}
-
-	if (!explorerPids.empty())
-	{
-		if (!terminatedAnyProcess)
-			return FALSE;
-
-		if (!WaitForExplorerExit(explorerPids, 10000))
-			return FALSE;
-	}
-
-	HINSTANCE launchResult = ShellExecuteW(NULL, L"open", L"explorer.exe", NULL, NULL, SW_SHOWNORMAL);
-	if ((INT_PTR)launchResult <= 32)
-		return FALSE;
-
-	return WaitForNewExplorerProcess(explorerPids, 10000);
-}
-
 // ----------------------------------------------------------------------------
 // Custom hyperlink control
 #define VISITED_COLOR RGB(160, 160, 260)
@@ -513,9 +404,6 @@ struct PickerVisibleItem
 static std::vector<PickerVisibleItem> gPickerVisibleItems;
 static std::wstring gPickerSearchQuery;
 static std::wstring gPickerTargetFolder;
-static std::wstring gSystemDefaultIconPath;
-static int gSystemDefaultIconIndex = 0;
-static BOOL gSystemDefaultIconSelected = FALSE;
 static const UINT kCustomDllIconNameBaseId = 100;
 
 enum PickerColorCategoryIndex
@@ -4211,45 +4099,20 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 
 			const PickerItem &item = gPickerCategories[visibleItem.categoryIndex].items[visibleItem.itemIndex];
 
-			// Check if this is system default icon picker
-			if (gPickerTargetFolder == L"<system-default>")
+			if (item.isBuiltIn)
 			{
-				// Store result in global variables for system default icon
-				if (item.isBuiltIn)
-				{
-					std::wstring exePath = GetCurrentExePath();
-					if (!exePath.empty())
-					{
-						gSystemDefaultIconPath = exePath;
-						gSystemDefaultIconIndex = item.builtInOffset + item.builtInIndex;
-					}
-				}
+				// Apply built-in colors using the currently running EXE resources.
+				std::wstring exePath = GetCurrentExePath();
+				if (!exePath.empty())
+					SetFolderIconResource(exePath.c_str(), item.builtInOffset + item.builtInIndex, (LPWSTR)gPickerTargetFolder.c_str());
 				else
-				{
-					gSystemDefaultIconPath = item.resourcePath;
-					gSystemDefaultIconIndex = item.resourceIndex;
-				}
-				gSystemDefaultIconSelected = TRUE;
-				DestroyWindow(hWnd);
+					SetFolderColor(item.builtInIndex, (LPWSTR)gPickerTargetFolder.c_str());
 			}
 			else
-			{
-				// Original per-folder icon setting
-				if (item.isBuiltIn)
-				{
-					// Apply built-in colors using the currently running EXE resources.
-					std::wstring exePath = GetCurrentExePath();
-					if (!exePath.empty())
-						SetFolderIconResource(exePath.c_str(), item.builtInOffset + item.builtInIndex, (LPWSTR)gPickerTargetFolder.c_str());
-					else
-						SetFolderColor(item.builtInIndex, (LPWSTR)gPickerTargetFolder.c_str());
-				}
-				else
-					SetFolderIconResource(item.resourcePath.c_str(), item.resourceIndex, (LPWSTR)gPickerTargetFolder.c_str());
+				SetFolderIconResource(item.resourcePath.c_str(), item.resourceIndex, (LPWSTR)gPickerTargetFolder.c_str());
 
-				ResetWindowsIconCache();
-				DestroyWindow(hWnd);
-			}
+			ResetWindowsIconCache();
+			DestroyWindow(hWnd);
 		}
 		break;
 
@@ -4465,88 +4328,6 @@ static int ShowFolderIconPicker(LPCWSTR folderPath)
 	}
 
 	return EXIT_SUCCESS;
-}
-
-/**
- * Show the system default icon picker window (no folder target needed).
- * Result is stored in gSystemDefaultIconPath and gSystemDefaultIconIndex.
- */
-static int ShowSystemDefaultIconPicker()
-{
-	gSystemDefaultIconPath.clear();
-	gSystemDefaultIconIndex = 0;
-	gSystemDefaultIconSelected = FALSE;
-	gPickerTargetFolder = L"<system-default>";
-	gPickerSearchQuery.clear();
-	gPickerVisibleItems.clear();
-	BuildPickerCategories(gPickerCategories);
-
-	WNDCLASSW wc = {};
-	wc.lpfnWndProc = PickerWndProc;
-	wc.hInstance = GetModuleHandleW(NULL);
-	wc.lpszClassName = L"FoldrionSystemDefaultIconPicker";
-	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hIcon = LoadIconA((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
-	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
-	RegisterClassW(&wc);
-
-	HWND hWnd = CreateWindowExW(
-		WS_EX_APPWINDOW,
-		wc.lpszClassName,
-		L"Set System Default Folder Icon",
-		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-		CW_USEDEFAULT, CW_USEDEFAULT, 1260, 480,
-		NULL, NULL, wc.hInstance, NULL);
-
-	if (!hWnd)
-		return EXIT_FAILURE;
-
-	CenterWindowOnScreen(hWnd, GetForegroundWindow());
-	ShowWindow(hWnd, SW_SHOW);
-	UpdateWindow(hWnd);
-
-	MSG msg = {};
-	while (GetMessage(&msg, NULL, 0, 0) > 0)
-	{
-		if (msg.message == WM_KEYDOWN)
-		{
-			BOOL handled = FALSE;
-			HWND hSearch = GetDlgItem(hWnd, IDC_PICKER_SEARCH);
-
-			if ((msg.wParam == VK_F2) ||
-				(msg.wParam == 'F' && (GetKeyState(VK_CONTROL) & 0x8000)))
-			{
-				if (hSearch)
-				{
-					SetFocus(hSearch);
-					SendMessageW(hSearch, EM_SETSEL, 0, -1);
-				}
-				handled = TRUE;
-			}
-			else if (msg.wParam == VK_ESCAPE)
-			{
-				if (hSearch && (GetFocus() == hSearch))
-				{
-					SetWindowTextW(hSearch, L"");
-					KillTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID);
-					ApplyPickerSearchNow(hWnd);
-				}
-				else
-				{
-					DestroyWindow(hWnd);
-				}
-				handled = TRUE;
-			}
-
-			if (handled)
-				continue;
-		}
-
-		TranslateMessage(&msg);
-		DispatchMessage(&msg);
-	}
-
-	return gSystemDefaultIconSelected ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 static void OpenLinkUrl()
@@ -5783,6 +5564,13 @@ static LRESULT CALLBACK InstallProgressWndProc(HWND hWnd, UINT uMsg, WPARAM wPar
 		return (LRESULT)(gDialogBackgroundBrush ? gDialogBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
 	}
 
+	case WM_CLOSE:
+		RequestInstallDiscoveryCancel();
+		SetWindowTextW(hWnd, L"Cancelling scan...");
+		SetDlgItemTextW(hWnd, IDC_INSTALL_PROGRESS_FOUND_ITEM, L"Cancelling scan, please wait...");
+		EnableMenuItem(GetSystemMenu(hWnd, FALSE), SC_CLOSE, MF_BYCOMMAND | MF_GRAYED);
+		return 0;
+
 	case WM_DESTROY:
 		KillTimer(hWnd, INSTALL_PROGRESS_TIMER_ID);
 		break;
@@ -5877,7 +5665,7 @@ static void CenterWindowOnScreen(HWND hWnd, HWND hReference)
 	CenterWindowInRect(hWnd, workArea, NULL);
 }
 
-/** Run Install() while displaying a borderless marquee progress window. */
+/** Run Install() while displaying a movable progress window. */
 static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, BOOL cacheOnlyMode)
 {
 	INITCOMMONCONTROLSEX icc = {};
@@ -5898,14 +5686,14 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 	}
 
 	HWND hProgressWnd = CreateWindowExW(
-		WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
+		WS_EX_APPWINDOW,
 		L"FoldrionInstallProgressWnd",
-		L"",
-		WS_POPUP,
+		cacheOnlyMode ? L"Scanning Windows DLL and EXE files" : (isReinstallOperation ? L"Re-installing Foldrion" : L"Installing Foldrion"),
+		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
 		CW_USEDEFAULT,
 		CW_USEDEFAULT,
-		420,
-		138,
+		460,
+		164,
 		hWnd,
 		NULL,
 		(HINSTANCE)GetModuleHandleW(NULL),
@@ -5924,9 +5712,9 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 		L"STATIC",
 		cacheOnlyMode ? L"Re-scanning icons, please wait..." : (isReinstallOperation ? L"Re-installing, please wait..." : L"Installing, please wait..."),
 		WS_CHILD | WS_VISIBLE | SS_CENTER,
-		20,
-		18,
-		380,
+		24,
+		22,
+		396,
 		22,
 		hProgressWnd,
 		NULL,
@@ -5938,9 +5726,9 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 		PROGRESS_CLASSW,
 		L"",
 		WS_CHILD | WS_VISIBLE | PBS_SMOOTH | PBS_MARQUEE,
-		28,
-		56,
-		364,
+		24,
+		62,
+		396,
 		20,
 		hProgressWnd,
 		(HMENU)IDC_INSTALL_PROGRESS_BAR,
@@ -5958,16 +5746,19 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 		L"STATIC",
 		L"Found: waiting...",
 		WS_CHILD | WS_VISIBLE | SS_CENTER,
-		18,
-		86,
-		384,
 		24,
+		98,
+		396,
+		28,
 		hProgressWnd,
 		(HMENU)IDC_INSTALL_PROGRESS_FOUND_ITEM,
 		NULL,
 		NULL);
 
-	CenterPopupToOwner(hProgressWnd, hWnd);
+	if (hWnd)
+		CenterPopupToOwner(hProgressWnd, hWnd);
+	else
+		CenterWindowOnScreen(hProgressWnd, GetForegroundWindow());
 	ShowWindow(hProgressWnd, SW_SHOW);
 	UpdateWindow(hProgressWnd);
 	SetTimer(hProgressWnd, INSTALL_PROGRESS_TIMER_ID, 120, NULL);
@@ -5991,6 +5782,7 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 	ctx.cacheOnlyMode = cacheOnlyMode;
 
 	DWORD threadId = 0;
+	ResetInstallDiscoveryCancel();
 	SetInstallDiscoveryProgressCallback(InstallDiscoveryProgressRelayCallback, hProgressWnd);
 	HANDLE hThread = CreateThread(NULL, 0, InstallWithProgressThreadProc, &ctx, 0, &threadId);
 	if (!hThread)
@@ -6262,43 +6054,6 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 		case IDC_PACKAGE_ICONS:
 		{
 			PackageIconsIntoDll(hWnd);
-			return (INT_PTR)TRUE;
-		}
-		break;
-
-		case IDC_SET_DEFAULT_ICON:
-		{
-			// Open the system default icon picker
-			if (ShowSystemDefaultIconPicker() == EXIT_SUCCESS)
-			{
-				if (!gSystemDefaultIconPath.empty())
-				{
-					if (SetSystemDefaultFolderIcon(gSystemDefaultIconPath.c_str(), gSystemDefaultIconIndex))
-						MessageBoxA(hWnd, "System default folder icon set for both closed and open folders. If Explorer still shows the old icon, use Restart Explorer.", "Success:", MB_OK | MB_ICONINFORMATION);
-					else
-						MessageBoxA(hWnd, "Unable to set the system default folder icon.", "Error:", MB_OK | MB_ICONERROR);
-				}
-			}
-			return (INT_PTR)TRUE;
-		}
-		break;
-
-		case IDC_RESTORE_DEFAULT_ICON:
-		{
-			if (RestoreSystemDefaultFolderIcon())
-				MessageBoxA(hWnd, "System default folder icon restored.", "Success:", MB_OK | MB_ICONINFORMATION);
-			else
-				MessageBoxA(hWnd, "Unable to restore the system default folder icon.", "Error:", MB_OK | MB_ICONERROR);
-			return (INT_PTR)TRUE;
-		}
-		break;
-
-		case IDC_RESTART_EXPLORER:
-		{
-			if (RestartExplorerProcess())
-				MessageBoxA(hWnd, "Explorer restarted.", "Success:", MB_OK | MB_ICONINFORMATION);
-			else
-				MessageBoxA(hWnd, "Could not restart Explorer. Try running the installer as administrator.", "Error:", MB_OK | MB_ICONERROR);
 			return (INT_PTR)TRUE;
 		}
 		break;
