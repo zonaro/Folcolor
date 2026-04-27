@@ -310,9 +310,12 @@ function renderIconPacks() {
     summary.setAttribute("aria-expanded", "false");
     group.appendChild(summary);
 
+    const filesId = `icon-pack-files-${pack.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
     const files = document.createElement("div");
     files.className = "icon-pack-files";
+    files.id = filesId;
     files.hidden = true;
+    summary.setAttribute("aria-controls", filesId);
 
     if (pack.files.length === 0) {
       const empty = document.createElement("p");
@@ -520,7 +523,7 @@ if (iconPacksList) {
 
       if (files) {
         summary.setAttribute("aria-expanded", String(!isExpanded));
-        files.hidden = isExpanded;
+        files.hidden = !files.hidden;
       }
 
       return;

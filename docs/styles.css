@@ -108,6 +108,7 @@ body::after {
 
 .icon-packs-menu {
   position: relative;
+  z-index: 20;
 }
 
 .icon-packs-trigger {
@@ -140,6 +141,7 @@ body::after {
   position: absolute;
   top: calc(100% + 14px);
   right: 0;
+  z-index: 200;
   width: min(360px, calc(100vw - 32px));
   max-height: min(70vh, 520px);
   overflow: auto;
@@ -201,6 +203,10 @@ body::after {
   display: grid;
   gap: 8px;
   padding: 0 10px 10px;
+}
+
+.icon-pack-files[hidden] {
+  display: none;
 }
 
 .icon-pack-download {
