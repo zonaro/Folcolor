@@ -1,5 +1,6 @@
 const translations = {
   en: {
+    navEditor: "Editor demo",
     navGithub: "GitHub",
     languageButton: "PT",
     eyebrow: "Open source Windows folder customization",
@@ -63,6 +64,7 @@ const translations = {
     editorTitle: "Compose new icons with layers, transforms, and color controls.",
     editorText:
       "The derived icon editor lets you stack layers on top of a base folder icon, then tune hue, saturation, opacity, scale, position, rotation, and grayscale colorization.",
+    editorOpenLink: "Open the functional editor demo",
     loadBaseLabel: "Load Base Icon",
     addLayerLabel: "Add Layer",
     layersLabel: "Layers",
@@ -83,6 +85,7 @@ const translations = {
       "Foldrion is a free open source Windows app to customize folder icons with colors, images, and icon packs."
   },
   pt: {
+    navEditor: "Demo do editor",
     navGithub: "GitHub",
     languageButton: "EN",
     eyebrow: "Personalização open source de pastas no Windows",
@@ -146,6 +149,7 @@ const translations = {
     editorTitle: "Monte novos ícones com camadas, transformações e controles de cor.",
     editorText:
       "O editor de ícones derivados permite empilhar camadas sobre um ícone base de pasta e ajustar hue, saturação, opacidade, escala, posição, rotação e colorização de tons de cinza.",
+    editorOpenLink: "Abrir a demo funcional do editor",
     loadBaseLabel: "Carregar ícone base",
     addLayerLabel: "Adicionar camada",
     layersLabel: "Camadas",

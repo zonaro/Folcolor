@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Foldrion Derived Icon Editor</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f5f5;
+      --panel: #ffffff;
+      --panel-2: #fbfbfb;
+      --border: #cccccc;
+      --text: #181818;
+      --muted: #666666;
+      --selection: #0078d7;
+      --selection-text: #ffffff;
+      --shadow: 0 26px 56px rgba(0, 0, 0, .24);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #202020;
+        --panel: #2c2c2c;
+        --panel-2: #343434;
+        --border: #4a4a4a;
+        --text: #ededed;
+        --muted: #bbbbbb;
+        --selection: #3a5b8a;
+        --selection-text: #ffffff;
+        --shadow: 0 26px 56px rgba(0, 0, 0, .45);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 20px;
+      background:
+        radial-gradient(circle at 12% 12%, rgba(0, 120, 215, 0.12), transparent 24%),
+        radial-gradient(circle at 88% 18%, rgba(255, 188, 66, 0.16), transparent 26%),
+        var(--bg);
+      color: var(--text);
+      font: 13px/1.3 Tahoma, "Segoe UI", sans-serif;
+    }
+
+    .window {
+      max-width: 1180px;
+      margin: 0 auto;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .titlebar {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-weight: 700;
+      background: color-mix(in srgb, var(--panel) 90%, black 10%);
+    }
+
+    .topbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      padding: 12px;
+      border-bottom: 1px solid var(--border);
+      background: color-mix(in srgb, var(--panel-2) 88%, transparent);
+    }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: 220px 440px 1fr;
+      gap: 16px;
+      padding: 16px;
+    }
+
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel-2);
+      padding: 12px;
+    }
+
+    .label {
+      display: block;
+      margin: 0 0 8px;
+      font-weight: 700;
+    }
+
+    .preview-frame {
+      width: 256px;
+      height: 256px;
+      margin: 0 auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+      background:
+        linear-gradient(45deg, rgba(0, 0, 0, .05) 25%, transparent 25%, transparent 75%, rgba(0, 0, 0, .05) 75%),
+        linear-gradient(45deg, rgba(0, 0, 0, .05) 25%, transparent 25%, transparent 75%, rgba(0, 0, 0, .05) 75%),
+        var(--panel);
+      background-size: 24px 24px;
+      background-position: 0 0, 12px 12px;
+      display: grid;
+      place-items: center;
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .preview-frame.dragging { cursor: grabbing; }
+    #previewCanvas {
+      width: 256px;
+      height: 256px;
+      image-rendering: auto;
+      display: block;
+    }
+
+    .helper {
+      margin-top: 10px;
+      color: var(--muted);
+    }
+
+    .list {
+      display: grid;
+      gap: 8px;
+      max-height: 256px;
+      overflow: auto;
+    }
+
+    .layer-item {
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      padding: 9px 10px;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .layer-item:hover { border-color: var(--border); }
+    .layer-item.active {
+      background: var(--selection);
+      color: var(--selection-text);
+    }
+
+    .stack-buttons,
+    .form-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    .stack-buttons button,
+    .topbar button,
+    .form-actions button {
+      border: 1px solid var(--border);
+      background: color-mix(in srgb, var(--panel) 88%, white 12%);
+      color: var(--text);
+      border-radius: 9px;
+      padding: 9px 12px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    button.primary {
+      background: linear-gradient(180deg, #ffd46e, #f3b432);
+      border-color: #b17a13;
+      color: #2d1d00;
+      font-weight: 700;
+    }
+
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: 1fr 62px;
+      gap: 6px 10px;
+      align-items: center;
+    }
+
+    .controls + .controls { margin-top: 12px; }
+
+    .controls label {
+      color: var(--text);
+    }
+
+    .controls input[type="number"],
+    .save-fields input[type="text"] {
+      width: 100%;
+      padding: 7px 8px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      font: inherit;
+    }
+
+    .controls input[type="range"] {
+      width: 100%;
+      grid-column: 1 / 2;
+      margin: 0;
+    }
+
+    .checkbox {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 14px 0 0;
+    }
+
+    .save-fields {
+      display: grid;
+      gap: 8px;
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid var(--border);
+    }
+
+    .status {
+      margin-top: 12px;
+      color: var(--muted);
+      min-height: 18px;
+    }
+
+    .hidden-input { display: none; }
+
+    @media (max-width: 1120px) {
+      .workspace { grid-template-columns: 1fr; }
+      .preview-frame { margin-left: 0; }
+    }
+  </style>
+</head>
+<body>
+  <main class="window" aria-label="Editor derivado de ícones do Foldrion">
+    <div class="titlebar">Create Derived Icon</div>
+
+    <section class="topbar">
+      <button id="loadBaseBtn">Load Base Icon</button>
+      <button id="addLayerBtn">Add Layer</button>
+      <span class="helper">Drag no preview para mover. Wheel: escala. `Shift`+wheel: rotação. `Ctrl`+wheel: opacidade. `Ctrl`+`Shift`+wheel: hue/saturation.</span>
+    </section>
+
+    <section class="workspace">
+      <div class="card">
+        <div class="label">Composed Preview</div>
+        <div class="preview-frame" id="previewFrame">
+          <canvas id="previewCanvas" width="256" height="256"></canvas>
+        </div>
+        <div class="helper">Canvas em 256x256 para acompanhar a composição do editor C++.</div>
+      </div>
+
+      <div class="card">
+        <div class="label">Layers</div>
+        <div class="list" id="layerList"></div>
+        <div class="stack-buttons">
+          <button id="removeLayerBtn">Remove</button>
+          <button id="moveUpBtn">Move Up</button>
+          <button id="moveDownBtn">Move Down</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="controls">
+          <label id="hueLabel" for="hueRange">Hue: 0</label>
+          <input id="hueInput" type="number" min="-180" max="180" value="0">
+          <input id="hueRange" type="range" min="-180" max="180" value="0">
+        </div>
+
+        <div class="controls">
+          <label id="saturationLabel" for="saturationRange">Saturation: 100%</label>
+          <input id="saturationInput" type="number" min="0" max="200" value="100">
+          <input id="saturationRange" type="range" min="0" max="200" value="100">
+        </div>
+
+        <div class="controls">
+          <label id="opacityLabel" for="opacityRange">Opacity: 100%</label>
+          <input id="opacityInput" type="number" min="0" max="100" value="100">
+          <input id="opacityRange" type="range" min="0" max="100" value="100">
+        </div>
+
+        <label class="checkbox">
+          <input id="colorizeInput" type="checkbox">
+          <span>Colorize grayscale</span>
+        </label>
+
+        <div class="controls">
+          <label id="scaleLabel" for="scaleRange">Scale: 100%</label>
+          <input id="scaleInput" type="number" min="10" max="300" value="100">
+          <input id="scaleRange" type="range" min="10" max="300" value="100">
+        </div>
+
+        <div class="controls">
+          <label id="posXLabel" for="posXRange">Position X: 0</label>
+          <input id="posXInput" type="number" min="-128" max="128" value="0">
+          <input id="posXRange" type="range" min="-128" max="128" value="0">
+        </div>
+
+        <div class="controls">
+          <label id="posYLabel" for="posYRange">Position Y: 0</label>
+          <input id="posYInput" type="number" min="-128" max="128" value="0">
+          <input id="posYRange" type="range" min="-128" max="128" value="0">
+        </div>
+
+        <div class="controls">
+          <label id="rotationLabel" for="rotationRange">Rotation: 0°</label>
+          <input id="rotationInput" type="number" min="0" max="360" value="0">
+          <input id="rotationRange" type="range" min="0" max="360" value="0">
+        </div>
+
+        <div class="save-fields">
+          <label>
+            <span class="label">Category</span>
+            <input id="categoryInput" type="text" value="Derived Icons">
+          </label>
+          <label>
+            <span class="label">Save name</span>
+            <input id="saveNameInput" type="text" value="derived-icon">
+          </label>
+        </div>
+
+        <div class="form-actions">
+          <button class="primary" id="saveBtn">Save PNG</button>
+          <button id="resetBtn">Reset Layer</button>
+        </div>
+        <div class="status" id="status">Editor pronto.</div>
+      </div>
+    </section>
+  </main>
+
+  <input class="hidden-input" id="baseInput" type="file" accept=".png,.ico,image/png,image/x-icon,image/vnd.microsoft.icon,image/*">
+  <input class="hidden-input" id="layerInput" type="file" accept=".png,.ico,image/png,image/x-icon,image/vnd.microsoft.icon,image/*" multiple>
+
+  <script>
+    const CANVAS_SIZE = 256;
+    const previewCanvas = document.getElementById('previewCanvas');
+    const previewCtx = previewCanvas.getContext('2d', { willReadFrequently: true });
+    const previewFrame = document.getElementById('previewFrame');
+    const layerListEl = document.getElementById('layerList');
+    const statusEl = document.getElementById('status');
+    const loadBaseBtn = document.getElementById('loadBaseBtn');
+    const addLayerBtn = document.getElementById('addLayerBtn');
+    const removeLayerBtn = document.getElementById('removeLayerBtn');
+    const moveUpBtn = document.getElementById('moveUpBtn');
+    const moveDownBtn = document.getElementById('moveDownBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const baseInput = document.getElementById('baseInput');
+    const layerInput = document.getElementById('layerInput');
+    const colorizeInput = document.getElementById('colorizeInput');
+    const hueRange = document.getElementById('hueRange');
+    const hueInput = document.getElementById('hueInput');
+    const hueLabel = document.getElementById('hueLabel');
+    const saturationRange = document.getElementById('saturationRange');
+    const saturationInput = document.getElementById('saturationInput');
+    const saturationLabel = document.getElementById('saturationLabel');
+    const opacityRange = document.getElementById('opacityRange');
+    const opacityInput = document.getElementById('opacityInput');
+    const opacityLabel = document.getElementById('opacityLabel');
+    const scaleRange = document.getElementById('scaleRange');
+    const scaleInput = document.getElementById('scaleInput');
+    const scaleLabel = document.getElementById('scaleLabel');
+    const posXRange = document.getElementById('posXRange');
+    const posXInput = document.getElementById('posXInput');
+    const posXLabel = document.getElementById('posXLabel');
+    const posYRange = document.getElementById('posYRange');
+    const posYInput = document.getElementById('posYInput');
+    const posYLabel = document.getElementById('posYLabel');
+    const rotationRange = document.getElementById('rotationRange');
+    const rotationInput = document.getElementById('rotationInput');
+    const rotationLabel = document.getElementById('rotationLabel');
+
+    const controls = {
+      hue: { range: hueRange, input: hueInput, label: hueLabel, min: -180, max: 180 },
+      saturation: { range: saturationRange, input: saturationInput, label: saturationLabel, min: 0, max: 200 },
+      opacity: { range: opacityRange, input: opacityInput, label: opacityLabel, min: 0, max: 100 },
+      scale: { range: scaleRange, input: scaleInput, label: scaleLabel, min: 10, max: 300 },
+      posX: { range: posXRange, input: posXInput, label: posXLabel, min: -128, max: 128 },
+      posY: { range: posYRange, input: posYInput, label: posYLabel, min: -128, max: 128 },
+      rotation: { range: rotationRange, input: rotationInput, label: rotationLabel, min: 0, max: 360 }
+    };
+
+    const state = {
+      layers: [],
+      selectedLayerIndex: 0,
+      syncing: false,
+      composedPixels: new Uint8ClampedArray(CANVAS_SIZE * CANVAS_SIZE * 4),
+      dragging: false,
+      dragStartX: 0,
+      dragStartY: 0,
+      dragStartPosX: 0,
+      dragStartPosY: 0
+    };
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function sanitizeStem(value) {
+      return (value || '')
+        .trim()
+        .replace(/[<>:"/\\|?*\x00-\x1f]+/g, '-')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '') || 'derived-icon';
+    }
+
+    function removeExtension(name) {
+      return name.replace(/\.[^.]+$/, '');
+    }
+
+    function roundRect(ctx, x, y, w, h, r) {
+      ctx.beginPath();
+      ctx.moveTo(x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, y + h - r);
+      ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      ctx.lineTo(x + r, y + h);
+      ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.closePath();
+    }
+
+    function createDefaultFolderCanvas() {
+      const canvas = document.createElement('canvas');
+      canvas.width = CANVAS_SIZE;
+      canvas.height = CANVAS_SIZE;
+      const ctx = canvas.getContext('2d');
+
+      const bg = ctx.createLinearGradient(0, 0, 0, CANVAS_SIZE);
+      bg.addColorStop(0, '#ffd86c');
+      bg.addColorStop(1, '#f0aa1f');
+
+      const tab = ctx.createLinearGradient(0, 0, 0, 96);
+      tab.addColorStop(0, '#ffe7a0');
+      tab.addColorStop(1, '#f8c855');
+
+      ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+      ctx.fillStyle = tab;
+      roundRect(ctx, 34, 54, 102, 42, 14);
+      ctx.fill();
+
+      ctx.fillStyle = bg;
+      roundRect(ctx, 26, 82, 204, 128, 22);
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(143, 90, 0, 0.35)';
+      ctx.lineWidth = 4;
+      roundRect(ctx, 26, 82, 204, 128, 22);
+      ctx.stroke();
+
+      ctx.fillStyle = 'rgba(255,255,255,0.18)';
+      roundRect(ctx, 38, 96, 182, 22, 11);
+      ctx.fill();
+
+      return canvas;
+    }
+
+    function canvasToLayer(canvas, displayName, isBase = false) {
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      return {
+        sourcePath: displayName,
+        displayName,
+        pixels: imageData.data,
+        width: canvas.width,
+        height: canvas.height,
+        hue: 0,
+        saturation: 100,
+        opacity: 100,
+        scale: 100,
+        posX: 0,
+        posY: 0,
+        rotation: 0,
+        colorize: false,
+        isBase
+      };
+    }
+
+    async function fileToCanvas(file) {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0);
+      return canvas;
+    }
+
+    function initEditor() {
+      const baseCanvas = createDefaultFolderCanvas();
+      const baseLayer = canvasToLayer(baseCanvas, 'Base Icon', true);
+      state.layers = [baseLayer];
+      state.selectedLayerIndex = 0;
+      document.getElementById('saveNameInput').value = 'derived-icon';
+      renderAll();
+    }
+
+    function adjustHueSaturation(r, g, b, hueDegrees, saturationPercent) {
+      let rf = r / 255;
+      let gf = g / 255;
+      let bf = b / 255;
+
+      const maxc = Math.max(rf, gf, bf);
+      const minc = Math.min(rf, gf, bf);
+      const delta = maxc - minc;
+
+      let h = 0;
+      if (delta > 0.000001) {
+        if (maxc === rf) h = 60 * (((gf - bf) / delta) % 6);
+        else if (maxc === gf) h = 60 * (((bf - rf) / delta) + 2);
+        else h = 60 * (((rf - gf) / delta) + 4);
+      }
+      if (h < 0) h += 360;
+
+      let s = maxc <= 0 ? 0 : delta / maxc;
+      const v = maxc;
+
+      h += hueDegrees;
+      while (h < 0) h += 360;
+      while (h >= 360) h -= 360;
+
+      s *= saturationPercent / 100;
+      s = clamp(s, 0, 1);
+
+      const c = v * s;
+      const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+      const m = v - c;
+      let rr = 0, gg = 0, bb = 0;
+
+      if (h < 60) [rr, gg, bb] = [c, x, 0];
+      else if (h < 120) [rr, gg, bb] = [x, c, 0];
+      else if (h < 180) [rr, gg, bb] = [0, c, x];
+      else if (h < 240) [rr, gg, bb] = [0, x, c];
+      else if (h < 300) [rr, gg, bb] = [x, 0, c];
+      else [rr, gg, bb] = [c, 0, x];
+
+      return [
+        clamp(Math.round((rr + m) * 255), 0, 255),
+        clamp(Math.round((gg + m) * 255), 0, 255),
+        clamp(Math.round((bb + m) * 255), 0, 255)
+      ];
+    }
+
+    function colorizePixelIfGray(r, g, b, hueDegrees, saturationPercent) {
+      const rb = Math.abs(r - b);
+      const rg = Math.abs(r - g);
+      const gb = Math.abs(g - b);
+      if (rb > 6 || rg > 6 || gb > 6) return [r, g, b];
+
+      let hue = hueDegrees;
+      while (hue < 0) hue += 360;
+      while (hue >= 360) hue -= 360;
+
+      let sat = clamp(saturationPercent, 0, 200) / 100;
+      if (sat > 1) sat = 1;
+
+      const value = Math.max(r, g, b) / 255;
+      const c = value * sat;
+      const x = c * (1 - Math.abs((hue / 60) % 2 - 1));
+      const m = value - c;
+      let rr = 0, gg = 0, bb = 0;
+
+      if (hue < 60) [rr, gg, bb] = [c, x, 0];
+      else if (hue < 120) [rr, gg, bb] = [x, c, 0];
+      else if (hue < 180) [rr, gg, bb] = [0, c, x];
+      else if (hue < 240) [rr, gg, bb] = [0, x, c];
+      else if (hue < 300) [rr, gg, bb] = [x, 0, c];
+      else [rr, gg, bb] = [c, 0, x];
+
+      return [
+        clamp(Math.round((rr + m) * 255), 0, 255),
+        clamp(Math.round((gg + m) * 255), 0, 255),
+        clamp(Math.round((bb + m) * 255), 0, 255)
+      ];
+    }
+
+    function blendPixelOver(dst, index, sr, sg, sb, sa) {
+      const srcA = sa / 255;
+      const dstA = dst[index + 3] / 255;
+      const outA = srcA + dstA * (1 - srcA);
+
+      if (outA <= 0.000001) {
+        dst[index] = 0;
+        dst[index + 1] = 0;
+        dst[index + 2] = 0;
+        dst[index + 3] = 0;
+        return;
+      }
+
+      const outR = ((sr * srcA) + (dst[index] * dstA * (1 - srcA))) / outA;
+      const outG = ((sg * srcA) + (dst[index + 1] * dstA * (1 - srcA))) / outA;
+      const outB = ((sb * srcA) + (dst[index + 2] * dstA * (1 - srcA))) / outA;
+
+      dst[index] = clamp(Math.round(outR), 0, 255);
+      dst[index + 1] = clamp(Math.round(outG), 0, 255);
+      dst[index + 2] = clamp(Math.round(outB), 0, 255);
+      dst[index + 3] = clamp(Math.round(outA * 255), 0, 255);
+    }
+
+    function rebuildComposite() {
+      const output = new Uint8ClampedArray(CANVAS_SIZE * CANVAS_SIZE * 4);
+
+      state.layers.forEach((layer) => {
+        if (!layer?.pixels?.length || !layer.width || !layer.height) return;
+
+        const fit = Math.min(CANVAS_SIZE / layer.width, CANVAS_SIZE / layer.height);
+        const scale = fit * (layer.scale / 100);
+        const drawW = Math.max(1, Math.round(layer.width * scale));
+        const drawH = Math.max(1, Math.round(layer.height * scale));
+        const startX = Math.floor((CANVAS_SIZE - drawW) / 2) + layer.posX;
+        const startY = Math.floor((CANVAS_SIZE - drawH) / 2) + layer.posY;
+        const centerX = startX + drawW * 0.5;
+        const centerY = startY + drawH * 0.5;
+        const halfW = drawW * 0.5;
+        const halfH = drawH * 0.5;
+        const angleRad = layer.rotation * Math.PI / 180;
+        const cosT = Math.cos(angleRad);
+        const sinT = Math.sin(angleRad);
+
+        for (let y = 0; y < drawH; y++) {
+          const dstY = startY + y;
+          if (dstY < 0 || dstY >= CANVAS_SIZE) continue;
+
+          for (let x = 0; x < drawW; x++) {
+            const dstX = startX + x;
+            if (dstX < 0 || dstX >= CANVAS_SIZE) continue;
+
+            const localX = (dstX + 0.5) - centerX;
+            const localY = (dstY + 0.5) - centerY;
+            const srcLocalX = (localX * cosT) + (localY * sinT);
+            const srcLocalY = (-localX * sinT) + (localY * cosT);
+            const srcNormX = srcLocalX / halfW;
+            const srcNormY = srcLocalY / halfH;
+            if (srcNormX < -1 || srcNormX > 1 || srcNormY < -1 || srcNormY > 1) continue;
+
+            const srcFx = ((srcNormX + 1) * 0.5) * (layer.width - 1);
+            const srcFy = ((srcNormY + 1) * 0.5) * (layer.height - 1);
+            const srcX = clamp(Math.round(srcFx), 0, layer.width - 1);
+            const srcY = clamp(Math.round(srcFy), 0, layer.height - 1);
+            const srcIndex = (srcY * layer.width + srcX) * 4;
+
+            let r = layer.pixels[srcIndex];
+            let g = layer.pixels[srcIndex + 1];
+            let b = layer.pixels[srcIndex + 2];
+            let a = layer.pixels[srcIndex + 3];
+
+            [r, g, b] = adjustHueSaturation(r, g, b, layer.hue, layer.saturation);
+            if (layer.colorize) [r, g, b] = colorizePixelIfGray(r, g, b, layer.hue, layer.saturation);
+            if (!layer.isBase) a = Math.round((a * layer.opacity) / 100);
+
+            blendPixelOver(output, (dstY * CANVAS_SIZE + dstX) * 4, r, g, b, a);
+          }
+        }
+      });
+
+      state.composedPixels = output;
+      previewCtx.putImageData(new ImageData(output, CANVAS_SIZE, CANVAS_SIZE), 0, 0);
+    }
+
+    function buildLayerListLabel(layer) {
+      const fixed = layer.isBase ? ' (Fixed)' : '';
+      return `${layer.displayName}${fixed} [H:${layer.hue} S:${layer.saturation}% O:${layer.opacity}% C:${layer.colorize ? 'On' : 'Off'} Sc:${layer.scale}% X:${layer.posX} Y:${layer.posY} R:${layer.rotation}]`;
+    }
+
+    function getSelectedLayer() {
+      return state.layers[state.selectedLayerIndex] || null;
+    }
+
+    function renderLayerList() {
+      layerListEl.innerHTML = '';
+      state.layers.forEach((layer, index) => {
+        const button = document.createElement('button');
+        button.className = `layer-item${index === state.selectedLayerIndex ? ' active' : ''}`;
+        button.textContent = buildLayerListLabel(layer);
+        button.addEventListener('click', () => {
+          state.selectedLayerIndex = index;
+          syncControlsFromSelection();
+          renderLayerList();
+        });
+        layerListEl.appendChild(button);
+      });
+    }
+
+    function setStatus(message) {
+      statusEl.textContent = message;
+    }
+
+    function updateLabels(layer) {
+      controls.hue.label.textContent = `Hue: ${layer.hue}`;
+      controls.saturation.label.textContent = `Saturation: ${layer.saturation}%`;
+      controls.opacity.label.textContent = `Opacity: ${layer.opacity}%`;
+      controls.scale.label.textContent = `Scale: ${layer.scale}%`;
+      controls.posX.label.textContent = `Position X: ${layer.posX}`;
+      controls.posY.label.textContent = `Position Y: ${layer.posY}`;
+      controls.rotation.label.textContent = `Rotation: ${layer.rotation}°`;
+    }
+
+    function syncControlsFromSelection() {
+      const layer = getSelectedLayer();
+      if (!layer) return;
+      state.syncing = true;
+
+      Object.entries(controls).forEach(([key, conf]) => {
+        conf.range.value = layer[key];
+        conf.input.value = layer[key];
+      });
+
+      colorizeInput.checked = layer.colorize;
+      updateLabels(layer);
+
+      removeLayerBtn.disabled = state.selectedLayerIndex <= 0;
+      moveUpBtn.disabled = state.selectedLayerIndex <= 1;
+      moveDownBtn.disabled = state.selectedLayerIndex <= 0 || state.selectedLayerIndex >= state.layers.length - 1;
+      opacityRange.disabled = layer.isBase;
+      opacityInput.disabled = layer.isBase;
+      rotationRange.disabled = layer.isBase;
+      rotationInput.disabled = layer.isBase;
+
+      state.syncing = false;
+    }
+
+    function commitFromControls(source = 'range') {
+      const layer = getSelectedLayer();
+      if (!layer || state.syncing) return;
+
+      Object.entries(controls).forEach(([key, conf]) => {
+        let value = source === 'input' ? Number(conf.input.value) : Number(conf.range.value);
+        if (Number.isNaN(value)) value = layer[key];
+        value = clamp(value, conf.min, conf.max);
+        layer[key] = value;
+        conf.range.value = value;
+        conf.input.value = value;
+      });
+
+      layer.colorize = colorizeInput.checked;
+      if (layer.isBase) {
+        layer.opacity = 100;
+        layer.rotation = 0;
+        opacityRange.value = 100;
+        opacityInput.value = 100;
+        rotationRange.value = 0;
+        rotationInput.value = 0;
+      }
+
+      updateLabels(layer);
+      rebuildComposite();
+      renderLayerList();
+    }
+
+    function renderAll() {
+      renderLayerList();
+      syncControlsFromSelection();
+      rebuildComposite();
+    }
+
+    function resetCurrentLayer() {
+      const layer = getSelectedLayer();
+      if (!layer) return;
+      layer.hue = 0;
+      layer.saturation = 100;
+      layer.opacity = 100;
+      layer.scale = 100;
+      layer.posX = 0;
+      layer.posY = 0;
+      layer.rotation = 0;
+      layer.colorize = false;
+      if (layer.isBase) layer.opacity = 100;
+      renderAll();
+      setStatus(`Layer resetada: ${layer.displayName}.`);
+    }
+
+    function moveLayer(direction) {
+      const idx = state.selectedLayerIndex;
+      if (direction === -1 && idx > 1) {
+        [state.layers[idx - 1], state.layers[idx]] = [state.layers[idx], state.layers[idx - 1]];
+        state.selectedLayerIndex -= 1;
+      } else if (direction === 1 && idx > 0 && idx < state.layers.length - 1) {
+        [state.layers[idx], state.layers[idx + 1]] = [state.layers[idx + 1], state.layers[idx]];
+        state.selectedLayerIndex += 1;
+      }
+      renderAll();
+    }
+
+    async function replaceBaseLayer(file) {
+      const canvas = await fileToCanvas(file);
+      state.layers[0] = canvasToLayer(canvas, removeExtension(file.name) || 'Base Icon', true);
+      state.selectedLayerIndex = 0;
+      renderAll();
+      setStatus(`Base carregada: ${file.name}.`);
+    }
+
+    async function addLayers(files) {
+      for (const file of files) {
+        const canvas = await fileToCanvas(file);
+        state.layers.push(canvasToLayer(canvas, file.name, false));
+        state.selectedLayerIndex = state.layers.length - 1;
+      }
+      renderAll();
+      setStatus(`${files.length} layer(s) adicionada(s).`);
+    }
+
+    function savePng() {
+      rebuildComposite();
+      const category = sanitizeStem(document.getElementById('categoryInput').value);
+      const name = sanitizeStem(document.getElementById('saveNameInput').value);
+      const filename = `${category}__${name}.png`;
+      previewCanvas.toBlob((blob) => {
+        if (!blob) {
+          setStatus('Falha ao gerar PNG.');
+          return;
+        }
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        link.click();
+        URL.revokeObjectURL(url);
+        setStatus(`PNG baixado: ${filename}.`);
+      }, 'image/png');
+    }
+
+    previewFrame.addEventListener('pointerdown', (event) => {
+      const layer = getSelectedLayer();
+      if (!layer) return;
+      state.dragging = true;
+      previewFrame.classList.add('dragging');
+      state.dragStartX = event.clientX;
+      state.dragStartY = event.clientY;
+      state.dragStartPosX = layer.posX;
+      state.dragStartPosY = layer.posY;
+      previewFrame.setPointerCapture(event.pointerId);
+    });
+
+    previewFrame.addEventListener('pointermove', (event) => {
+      if (!state.dragging) return;
+      const layer = getSelectedLayer();
+      if (!layer) return;
+      const dx = Math.round(event.clientX - state.dragStartX);
+      const dy = Math.round(event.clientY - state.dragStartY);
+      layer.posX = clamp(state.dragStartPosX + dx, -128, 128);
+      layer.posY = clamp(state.dragStartPosY + dy, -128, 128);
+      syncControlsFromSelection();
+      rebuildComposite();
+      renderLayerList();
+    });
+
+    function stopDrag(event) {
+      if (!state.dragging) return;
+      state.dragging = false;
+      previewFrame.classList.remove('dragging');
+      if (event) previewFrame.releasePointerCapture(event.pointerId);
+    }
+
+    previewFrame.addEventListener('pointerup', stopDrag);
+    previewFrame.addEventListener('pointercancel', stopDrag);
+
+    previewFrame.addEventListener('wheel', (event) => {
+      event.preventDefault();
+      const layer = getSelectedLayer();
+      if (!layer) return;
+      const step = event.deltaY < 0 ? 5 : -5;
+      const ctrl = event.ctrlKey;
+      const shift = event.shiftKey;
+
+      if (ctrl && !shift && !layer.isBase) {
+        layer.opacity = clamp(layer.opacity + step, 0, 100);
+      } else if (ctrl && shift && !layer.isBase) {
+        layer.hue = clamp(layer.hue + step, -180, 180);
+        layer.saturation = clamp(layer.saturation + step, 0, 200);
+      } else if (!ctrl && shift && !layer.isBase) {
+        let rotation = layer.rotation + step;
+        while (rotation < 0) rotation += 360;
+        while (rotation > 360) rotation -= 360;
+        layer.rotation = rotation;
+      } else {
+        layer.scale = clamp(layer.scale + step, 10, 300);
+      }
+
+      syncControlsFromSelection();
+      rebuildComposite();
+      renderLayerList();
+    }, { passive: false });
+
+    Object.values(controls).forEach((conf) => {
+      conf.range.addEventListener('input', () => commitFromControls('range'));
+      conf.input.addEventListener('input', () => commitFromControls('input'));
+    });
+
+    colorizeInput.addEventListener('change', () => commitFromControls('range'));
+    removeLayerBtn.addEventListener('click', () => {
+      if (state.selectedLayerIndex <= 0) return;
+      const removed = state.layers.splice(state.selectedLayerIndex, 1);
+      state.selectedLayerIndex = clamp(state.selectedLayerIndex - 1, 0, state.layers.length - 1);
+      renderAll();
+      setStatus(`Layer removida: ${removed[0].displayName}.`);
+    });
+    moveUpBtn.addEventListener('click', () => moveLayer(-1));
+    moveDownBtn.addEventListener('click', () => moveLayer(1));
+    resetBtn.addEventListener('click', resetCurrentLayer);
+    saveBtn.addEventListener('click', savePng);
+    loadBaseBtn.addEventListener('click', () => baseInput.click());
+    addLayerBtn.addEventListener('click', () => layerInput.click());
+
+    baseInput.addEventListener('change', async (event) => {
+      const [file] = event.target.files || [];
+      if (!file) return;
+      try {
+        await replaceBaseLayer(file);
+      } catch (error) {
+        setStatus(`Falha ao carregar base: ${error.message}`);
+      } finally {
+        event.target.value = '';
+      }
+    });
+
+    layerInput.addEventListener('change', async (event) => {
+      const files = [...(event.target.files || [])];
+      if (!files.length) return;
+      try {
+        await addLayers(files);
+      } catch (error) {
+        setStatus(`Falha ao adicionar layer: ${error.message}`);
+      } finally {
+        event.target.value = '';
+      }
+    });
+
+    initEditor();
+  </script>
+</body>
+</html>

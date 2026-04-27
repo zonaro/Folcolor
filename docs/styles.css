@@ -440,6 +440,15 @@ body::after {
   line-height: 1.7;
 }
 
+.demo-link-row {
+  margin-top: 18px;
+}
+
+.demo-link-button {
+  min-width: 0;
+  box-shadow: none;
+}
+
 .demo-window {
   position: relative;
   z-index: 1;
