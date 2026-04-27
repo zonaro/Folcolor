@@ -25,13 +25,47 @@ extern int Uninstall();
 extern BOOL HasInstallRegistry();
 extern void RebuildSystemIconCacheOnly();
 static BOOL StartBackgroundIconCacheScan();
+static void CenterPopupToOwner(HWND hPopup, HWND hOwner);
+static void CenterWindowOnScreen(HWND hWnd, HWND hReference);
 
 // ntdll.lib
 typedef long NTSTATUS;
 extern "C" NTSYSAPI NTSTATUS NTAPI RtlGetVersion(__out PRTL_OSVERSIONINFOEXW VersionInformation /*PRTL_OSVERSIONINFOW*/);
 
+static BOOL IsProgressOnlyWindow(HWND hWnd)
+{
+	if (!hWnd)
+		return FALSE;
 
-// If there is another instance of us running, pull it into focus and return TRUE
+	WCHAR className[64] = {};
+	if (!GetClassNameW(hWnd, className, _countof(className)))
+		return FALSE;
+
+	return (_wcsicmp(className, L"FoldrionInstallProgressWnd") == 0);
+}
+
+static HWND GetPrimaryFoldrionWindowForPid(UINT pid)
+{
+	HWND hwndNext = FindWindowEx(NULL, NULL, NULL, NULL);
+	while (hwndNext)
+	{
+		DWORD pid2 = 0;
+		GetWindowThreadProcessId(hwndNext, &pid2);
+		if ((pid == pid2) &&
+			IsWindowVisible(hwndNext) &&
+			(GetWindow(hwndNext, GW_OWNER) == NULL) &&
+			!IsProgressOnlyWindow(hwndNext))
+		{
+			return hwndNext;
+		}
+
+		hwndNext = FindWindowEx(NULL, hwndNext, NULL, NULL);
+	}
+
+	return NULL;
+}
+
+// If there is another interactive instance of us running, pull it into focus and return TRUE
 static BOOL FindDoppelganger()
 {
 	BOOL found = FALSE;
@@ -52,11 +86,13 @@ static BOOL FindDoppelganger()
 			{
 				if ((strcmp(myName, nfo.szExeFile) == 0) && (nfo.th32ProcessID != myPid))
 				{
-					HWND hwnd = GetHwndForPid(nfo.th32ProcessID);
-					if(hwnd)
+					HWND hwnd = GetPrimaryFoldrionWindowForPid(nfo.th32ProcessID);
+					if (hwnd)
+					{
 						ForceWindowFocus(hwnd);
-					found = TRUE;
-					break;
+						found = TRUE;
+						break;
+					}
 				}
 
 			} while (Process32Next(handle, &nfo));
@@ -91,7 +127,7 @@ static std::vector<DWORD> GetExplorerProcessIds()
 	return explorerPids;
 }
 
-static BOOL WaitForExplorerExit(const std::vector<DWORD>& explorerPids, DWORD timeoutMs)
+static BOOL WaitForExplorerExit(const std::vector<DWORD> &explorerPids, DWORD timeoutMs)
 {
 	DWORD startTick = GetTickCount();
 	for (;;)
@@ -122,7 +158,7 @@ static BOOL WaitForExplorerExit(const std::vector<DWORD>& explorerPids, DWORD ti
 	}
 }
 
-static BOOL WaitForNewExplorerProcess(const std::vector<DWORD>& previousPids, DWORD timeoutMs)
+static BOOL WaitForNewExplorerProcess(const std::vector<DWORD> &previousPids, DWORD timeoutMs)
 {
 	DWORD startTick = GetTickCount();
 	for (;;)
@@ -177,7 +213,6 @@ static BOOL RestartExplorerProcess()
 	return WaitForNewExplorerProcess(explorerPids, 10000);
 }
 
-
 // ----------------------------------------------------------------------------
 // Custom hyperlink control
 #define VISITED_COLOR RGB(160, 160, 260)
@@ -189,11 +224,11 @@ static COLORREF urlColor = RGB(0, 102, 204);
 static HBRUSH gDialogBackgroundBrush = NULL;
 static HBRUSH gDialogButtonBrush = NULL;
 
-static const char* kVersionBlobUrl = "https://github.com/zonaro/Foldrion/blob/main/src/Controller/Win32/Release/version.txt";
-static const char* kVersionRawUrl = "https://raw.githubusercontent.com/zonaro/Foldrion/main/src/Controller/Win32/Release/version.txt";
-static const wchar_t* kDownloadExeRawUrl = L"https://raw.githubusercontent.com/zonaro/Foldrion/main/src/Controller/Win32/Release/Foldrion.exe";
+static const char *kVersionBlobUrl = "https://github.com/zonaro/Foldrion/blob/main/src/Controller/Win32/Release/version.txt";
+static const char *kVersionRawUrl = "https://raw.githubusercontent.com/zonaro/Foldrion/main/src/Controller/Win32/Release/version.txt";
+static const wchar_t *kDownloadExeRawUrl = L"https://raw.githubusercontent.com/zonaro/Foldrion/main/src/Controller/Win32/Release/Foldrion.exe";
 
-static std::string TrimAsciiWhitespace(const std::string& value)
+static std::string TrimAsciiWhitespace(const std::string &value)
 {
 	size_t start = 0;
 	while (start < value.size() && isspace(static_cast<unsigned char>(value[start])))
@@ -206,12 +241,12 @@ static std::string TrimAsciiWhitespace(const std::string& value)
 	return value.substr(start, end - start);
 }
 
-static bool LooksLikeVersionString(const std::string& value)
+static bool LooksLikeVersionString(const std::string &value)
 {
 	return !value.empty() && value[0] == 'v';
 }
 
-static std::string DownloadTextUrl(const char* url)
+static std::string DownloadTextUrl(const char *url)
 {
 	HINTERNET hInternet = InternetOpenA("Foldrion", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
 	if (!hInternet)
@@ -280,7 +315,7 @@ static void UpdateInstallerTheme(HWND hWnd)
 /**
  * Build absolute path to the installed executable expected in the install folder.
  */
-static void BuildInstalledExePath(WCHAR* exePath, size_t exePathCount)
+static void BuildInstalledExePath(WCHAR *exePath, size_t exePathCount)
 {
 	if (!exePath || (exePathCount == 0))
 		return;
@@ -353,15 +388,15 @@ static void RunReinstallFlow(HWND hWnd)
 	SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
 	UpdateInstallDependentControls(hWnd);
 	if (StartBackgroundIconCacheScan())
-		MessageBoxA(hWnd, "Re-installation complete. Icon cache scan started in the background.", "Completion:", (MB_OK | MB_ICONASTERISK));
+		MessageBoxA(hWnd, "Re-installation complete. Icon cache re-scan opened in a separate progress window.", "Completion:", (MB_OK | MB_ICONASTERISK));
 	else
-		MessageBoxA(hWnd, "Re-installation complete, but the background icon cache scan could not be started.", "Completion:", (MB_OK | MB_ICONWARNING));
+		MessageBoxA(hWnd, "Re-installation complete, but the icon cache re-scan could not be started.", "Completion:", (MB_OK | MB_ICONWARNING));
 }
 
 /**
  * Build a compact user message listing files that failed to import.
  */
-static void AppendFailedImportList(char* buffer, size_t bufferSize, const std::vector<std::wstring>& failedFiles)
+static void AppendFailedImportList(char *buffer, size_t bufferSize, const std::vector<std::wstring> &failedFiles)
 {
 	if (!buffer || (bufferSize == 0) || failedFiles.empty())
 		return;
@@ -370,7 +405,7 @@ static void AppendFailedImportList(char* buffer, size_t bufferSize, const std::v
 	for (size_t i = 0; i < failedFiles.size(); i++)
 	{
 		char nameBuffer[128] = {};
-		WideCharToMultiByte(CP_ACP, 0, failedFiles[i].c_str(), -1, nameBuffer, (int) sizeof(nameBuffer), NULL, NULL);
+		WideCharToMultiByte(CP_ACP, 0, failedFiles[i].c_str(), -1, nameBuffer, (int)sizeof(nameBuffer), NULL, NULL);
 
 		if (i > 0)
 			strcat_s(buffer, bufferSize, ", ");
@@ -379,7 +414,7 @@ static void AppendFailedImportList(char* buffer, size_t bufferSize, const std::v
 		if (i == 4 && (failedFiles.size() > 5))
 		{
 			char extraBuffer[32];
-			sprintf_s(extraBuffer, sizeof(extraBuffer), " and %u more", (UINT) (failedFiles.size() - 5));
+			sprintf_s(extraBuffer, sizeof(extraBuffer), " and %u more", (UINT)(failedFiles.size() - 5));
 			strcat_s(buffer, bufferSize, extraBuffer);
 			break;
 		}
@@ -395,11 +430,11 @@ static BOOL OpenDirectoryInExplorer(LPCWSTR folderPath)
 		return FALSE;
 
 	HINSTANCE hRes = ShellExecuteW(NULL, L"open", folderPath, NULL, NULL, SW_SHOWNORMAL);
-	return ((INT_PTR) hRes > 32);
+	return ((INT_PTR)hRes > 32);
 }
 
 /**
- * Launch the installed executable so it can rebuild the icon cache in the background.
+ * Launch the installed executable so it can rebuild the icon cache in a separate progress window.
  */
 static BOOL StartBackgroundIconCacheScan()
 {
@@ -415,7 +450,7 @@ static BOOL StartBackgroundIconCacheScan()
 	STARTUPINFOW si = {};
 	si.cb = sizeof(si);
 	si.dwFlags = STARTF_USESHOWWINDOW;
-	si.wShowWindow = SW_MINIMIZE;
+	si.wShowWindow = SW_SHOWNORMAL;
 
 	PROCESS_INFORMATION pi = {};
 	BOOL ok = CreateProcessW(installedExePath, cmdLine, NULL, NULL, FALSE, CREATE_NEW_PROCESS_GROUP, NULL, myPathGlobal, &si, &pi);
@@ -443,7 +478,6 @@ static BOOL EnsureDirectoryExists(LPCWSTR folderPath)
 	return (GetLastError() == ERROR_ALREADY_EXISTS);
 }
 
-
 /**
  * Runtime icon picker item.
  */
@@ -458,7 +492,6 @@ struct PickerItem
 	HICON cachedIcon;
 	BOOL ownsCachedIcon;
 };
-
 
 /**
  * Runtime icon picker category.
@@ -510,10 +543,10 @@ enum PickerColorCategoryIndex
 #define WM_PICKER_DELETE_REQUEST (WM_APP + 101)
 
 /** Large icon displayed in the preview box. */
-static HICON gPickerPreviewIcon      = NULL;
-static BOOL  gPickerPreviewOwnsIcon  = FALSE;
-static BOOL  gPickerPreviewIsFolder  = FALSE;
-static BOOL  gPickerPreviewIsDefault = FALSE;
+static HICON gPickerPreviewIcon = NULL;
+static BOOL gPickerPreviewOwnsIcon = FALSE;
+static BOOL gPickerPreviewIsFolder = FALSE;
+static BOOL gPickerPreviewIsDefault = FALSE;
 static std::wstring GetIconDisplayName(LPCWSTR dllPath, UINT iconIndex);
 
 // Derived icon editor controls.
@@ -718,7 +751,7 @@ static void ReleaseRuntimeThemeResourcesIfUnused()
 }
 
 static LRESULT CALLBACK DerivedPreviewSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
-	UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+												   UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
 {
 	UNREFERENCED_PARAMETER(uIdSubclass);
 	UNREFERENCED_PARAMETER(dwRefData);
@@ -728,24 +761,24 @@ static LRESULT CALLBACK DerivedPreviewSubclassProc(HWND hWnd, UINT uMsg, WPARAM 
 
 	switch (uMsg)
 	{
-		case WM_MOUSEWHEEL:
-			SendMessageW(hParent, WM_MOUSEWHEEL, wParam, lParam);
-			return 0;
+	case WM_MOUSEWHEEL:
+		SendMessageW(hParent, WM_MOUSEWHEEL, wParam, lParam);
+		return 0;
 
-		case WM_LBUTTONDOWN:
-		case WM_MOUSEMOVE:
-		case WM_LBUTTONUP:
-		{
-			POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
-			ClientToScreen(hWnd, &pt);
-			ScreenToClient(hParent, &pt);
-			SendMessageW(hParent, uMsg, wParam, MAKELPARAM(pt.x, pt.y));
-			return 0;
-		}
+	case WM_LBUTTONDOWN:
+	case WM_MOUSEMOVE:
+	case WM_LBUTTONUP:
+	{
+		POINT pt = {(short)LOWORD(lParam), (short)HIWORD(lParam)};
+		ClientToScreen(hWnd, &pt);
+		ScreenToClient(hParent, &pt);
+		SendMessageW(hParent, uMsg, wParam, MAKELPARAM(pt.x, pt.y));
+		return 0;
+	}
 
-		case WM_NCDESTROY:
-			RemoveWindowSubclass(hWnd, DerivedPreviewSubclassProc, 1);
-			break;
+	case WM_NCDESTROY:
+		RemoveWindowSubclass(hWnd, DerivedPreviewSubclassProc, 1);
+		break;
 	}
 
 	return DefSubclassProc(hWnd, uMsg, wParam, lParam);
@@ -754,19 +787,18 @@ static LRESULT CALLBACK DerivedPreviewSubclassProc(HWND hWnd, UINT uMsg, WPARAM 
 /**
  * Return lowercase copy for case-insensitive matching.
  */
-static std::wstring ToLowerCopy(const std::wstring& value)
+static std::wstring ToLowerCopy(const std::wstring &value)
 {
 	std::wstring out = value;
 	for (size_t i = 0; i < out.size(); i++)
-		out[i] = (WCHAR) towlower(out[i]);
+		out[i] = (WCHAR)towlower(out[i]);
 	return out;
 }
-
 
 /**
  * Return a copy without whitespace characters.
  */
-static std::wstring RemoveWhitespaceCopy(const std::wstring& value)
+static std::wstring RemoveWhitespaceCopy(const std::wstring &value)
 {
 	std::wstring out;
 	out.reserve(value.size());
@@ -778,26 +810,27 @@ static std::wstring RemoveWhitespaceCopy(const std::wstring& value)
 	return out;
 }
 
-
 /**
  * Compute Levenshtein edit distance between two lowercase wide strings.
  * Uses the standard iterative two-row DP approach.
  */
-static int LevenshteinDistance(const std::wstring& a, const std::wstring& b)
+static int LevenshteinDistance(const std::wstring &a, const std::wstring &b)
 {
 	size_t m = a.size();
 	size_t n = b.size();
-	if (m == 0) return (int) n;
-	if (n == 0) return (int) m;
+	if (m == 0)
+		return (int)n;
+	if (n == 0)
+		return (int)m;
 
 	std::vector<int> prev(n + 1, 0);
 	std::vector<int> curr(n + 1, 0);
 	for (size_t j = 0; j <= n; j++)
-		prev[j] = (int) j;
+		prev[j] = (int)j;
 
 	for (size_t i = 1; i <= m; i++)
 	{
-		curr[0] = (int) i;
+		curr[0] = (int)i;
 		for (size_t j = 1; j <= n; j++)
 		{
 			int cost = (a[i - 1] == b[j - 1]) ? 0 : 1;
@@ -808,13 +841,12 @@ static int LevenshteinDistance(const std::wstring& a, const std::wstring& b)
 	return prev[n];
 }
 
-
 /**
  * Return TRUE if lowerQuery fuzzy-matches the lowerTarget string.
  * First tries a fast substring check; then tokenises on spaces and checks
  * each token with Levenshtein distance <= maxDist.
  */
-static BOOL FuzzyMatchQuery(const std::wstring& lowerQuery, const std::wstring& lowerTarget, int maxDist)
+static BOOL FuzzyMatchQuery(const std::wstring &lowerQuery, const std::wstring &lowerTarget, int maxDist)
 {
 	std::wstring compactQuery = RemoveWhitespaceCopy(lowerQuery);
 	std::wstring compactTarget = RemoveWhitespaceCopy(lowerTarget);
@@ -827,8 +859,8 @@ static BOOL FuzzyMatchQuery(const std::wstring& lowerQuery, const std::wstring& 
 
 	size_t qLen = compactQuery.size();
 	size_t tLen = compactTarget.size();
-	if ((int) qLen <= (int) tLen + maxDist &&
-		(int) tLen <= (int) qLen + maxDist)
+	if ((int)qLen <= (int)tLen + maxDist &&
+		(int)tLen <= (int)qLen + maxDist)
 	{
 		if (LevenshteinDistance(compactQuery, compactTarget) <= maxDist)
 			return TRUE;
@@ -847,8 +879,8 @@ static BOOL FuzzyMatchQuery(const std::wstring& lowerQuery, const std::wstring& 
 		{
 			std::wstring token = RemoveWhitespaceCopy(lowerTarget.substr(start, tokenLen));
 			tokenLen = token.size();
-			if ((int) qLen <= (int) tokenLen + maxDist &&
-				(int) tokenLen <= (int) qLen + maxDist)
+			if ((int)qLen <= (int)tokenLen + maxDist &&
+				(int)tokenLen <= (int)qLen + maxDist)
 			{
 				if (LevenshteinDistance(compactQuery, token) <= maxDist)
 					return TRUE;
@@ -862,12 +894,11 @@ static BOOL FuzzyMatchQuery(const std::wstring& lowerQuery, const std::wstring& 
 	return FALSE;
 }
 
-
 /**
  * Return the best Levenshtein distance between query and target forms.
  * Includes compact full-string compare and compact token compares.
  */
-static int BestLevenshteinDistance(const std::wstring& lowerQuery, const std::wstring& lowerTarget)
+static int BestLevenshteinDistance(const std::wstring &lowerQuery, const std::wstring &lowerTarget)
 {
 	std::wstring compactQuery = RemoveWhitespaceCopy(lowerQuery);
 	std::wstring compactTarget = RemoveWhitespaceCopy(lowerTarget);
@@ -906,7 +937,6 @@ static int BestLevenshteinDistance(const std::wstring& lowerQuery, const std::ws
 	return best;
 }
 
-
 /**
  * Refresh current search query from the search box.
  */
@@ -926,11 +956,10 @@ static void UpdatePickerSearchQuery(HWND hWnd)
 		return;
 	}
 
-	std::vector<WCHAR> buffer((size_t) len + 1, 0);
+	std::vector<WCHAR> buffer((size_t)len + 1, 0);
 	GetWindowTextW(hSearch, &buffer[0], len + 1);
 	gPickerSearchQuery = ToLowerCopy(std::wstring(&buffer[0]));
 }
-
 
 /**
  * Rebuild visible items based on selected category or global search.
@@ -941,15 +970,15 @@ static void RebuildPickerVisibleItems(int categoryIndex)
 
 	if (gPickerSearchQuery.empty())
 	{
-		if ((categoryIndex < 0) || (categoryIndex >= (int) gPickerCategories.size()))
+		if ((categoryIndex < 0) || (categoryIndex >= (int)gPickerCategories.size()))
 			return;
 
-		const PickerCategory& cat = gPickerCategories[categoryIndex];
+		const PickerCategory &cat = gPickerCategories[categoryIndex];
 		for (size_t i = 0; i < cat.items.size(); i++)
 		{
 			PickerVisibleItem visible = {};
 			visible.categoryIndex = categoryIndex;
-			visible.itemIndex = (int) i;
+			visible.itemIndex = (int)i;
 			visible.displayLabel = cat.items[i].label;
 			gPickerVisibleItems.push_back(visible);
 		}
@@ -967,15 +996,15 @@ static void RebuildPickerVisibleItems(int categoryIndex)
 
 	for (size_t c = 0; c < gPickerCategories.size(); c++)
 	{
-		const PickerCategory& cat = gPickerCategories[c];
+		const PickerCategory &cat = gPickerCategories[c];
 		std::wstring lowerCategory = ToLowerCopy(cat.name);
 
 		for (size_t i = 0; i < cat.items.size(); i++)
 		{
-			const PickerItem& item = cat.items[i];
+			const PickerItem &item = cat.items[i];
 			std::wstring lowerLabel = ToLowerCopy(item.label);
-			if (!FuzzyMatchQuery(gPickerSearchQuery, lowerLabel, 3) &&
-				!FuzzyMatchQuery(gPickerSearchQuery, lowerCategory, 3))
+			if (!FuzzyMatchQuery(gPickerSearchQuery, lowerLabel, 2) &&
+				!FuzzyMatchQuery(gPickerSearchQuery, lowerCategory, 2))
 			{
 				continue;
 			}
@@ -984,8 +1013,8 @@ static void RebuildPickerVisibleItems(int categoryIndex)
 			int categoryDistance = BestLevenshteinDistance(gPickerSearchQuery, lowerCategory);
 
 			PickerVisibleItem visible = {};
-			visible.categoryIndex = (int) c;
-			visible.itemIndex = (int) i;
+			visible.categoryIndex = (int)c;
+			visible.itemIndex = (int)i;
 			visible.displayLabel = L"[" + cat.name + L"] " + item.label;
 
 			SearchCandidate candidate = {};
@@ -996,8 +1025,8 @@ static void RebuildPickerVisibleItems(int categoryIndex)
 		}
 	}
 
-	std::sort(candidates.begin(), candidates.end(), [](const SearchCandidate& left, const SearchCandidate& right)
-	{
+	std::sort(candidates.begin(), candidates.end(), [](const SearchCandidate &left, const SearchCandidate &right)
+			  {
 		if (left.distance != right.distance)
 			return (left.distance < right.distance);
 
@@ -1007,13 +1036,11 @@ static void RebuildPickerVisibleItems(int categoryIndex)
 		if (left.visible.categoryIndex != right.visible.categoryIndex)
 			return (left.visible.categoryIndex < right.visible.categoryIndex);
 
-		return (left.visible.itemIndex < right.visible.itemIndex);
-	});
+		return (left.visible.itemIndex < right.visible.itemIndex); });
 
 	for (size_t i = 0; i < candidates.size(); i++)
 		gPickerVisibleItems.push_back(candidates[i].visible);
 }
-
 
 /**
  * Return the path to the cached Windows icon library list in the install folder.
@@ -1023,16 +1050,15 @@ static std::wstring BuildSystemIconCachePath()
 	return std::wstring(myPathGlobal) + SYSTEM_ICON_CACHE_FILE;
 }
 
-
 /**
  * Read cached Windows icon library paths generated during install/reinstall.
  */
-static void LoadCachedSystemIconLibraryPaths(std::vector<std::wstring>& outPaths)
+static void LoadCachedSystemIconLibraryPaths(std::vector<std::wstring> &outPaths)
 {
 	outPaths.clear();
 	std::wstring cachePath = BuildSystemIconCachePath();
 
-	FILE* fp = NULL;
+	FILE *fp = NULL;
 	errno_t err = _wfopen_s(&fp, cachePath.c_str(), L"rt, ccs=UNICODE");
 	if ((err != 0) || !fp)
 		return;
@@ -1053,11 +1079,10 @@ static void LoadCachedSystemIconLibraryPaths(std::vector<std::wstring>& outPaths
 	fclose(fp);
 }
 
-
 /**
  * Build picker category label using only the DLL/EXE file name.
  */
-static std::wstring BuildCachedSystemIconCategoryLabel(const std::wstring& filePath)
+static std::wstring BuildCachedSystemIconCategoryLabel(const std::wstring &filePath)
 {
 	LPCWSTR fileName = PathFindFileNameW(filePath.c_str());
 	if (fileName && fileName[0])
@@ -1065,7 +1090,6 @@ static std::wstring BuildCachedSystemIconCategoryLabel(const std::wstring& fileP
 
 	return std::wstring(L"Windows - ") + filePath;
 }
-
 
 /**
  * Return absolute path of the current executable.
@@ -1077,7 +1101,6 @@ static std::wstring GetCurrentExePath()
 		return std::wstring();
 	return std::wstring(exePath);
 }
-
 
 /**
  * Return default Colors category index for the current OS.
@@ -1093,11 +1116,10 @@ static int GetDefaultColorCategoryIndex()
 	return PICKER_COLORS_WIN78;
 }
 
-
 /**
  * Add one built-in color category for a specific resource set.
  */
-static void AddColorsCategory(std::vector<PickerCategory>& out, const WCHAR* categoryName, int builtInOffset)
+static void AddColorsCategory(std::vector<PickerCategory> &out, const WCHAR *categoryName, int builtInOffset)
 {
 	PickerCategory cat;
 	cat.name = categoryName;
@@ -1116,11 +1138,10 @@ static void AddColorsCategory(std::vector<PickerCategory>& out, const WCHAR* cat
 	out.push_back(cat);
 }
 
-
 /**
  * Add one DLL/EXE category by enumerating all icon resources.
  */
-static void AddDllCategory(std::vector<PickerCategory>& out, const std::wstring& categoryName, const std::wstring& filePath)
+static void AddDllCategory(std::vector<PickerCategory> &out, const std::wstring &categoryName, const std::wstring &filePath)
 {
 	if (filePath.empty())
 		return;
@@ -1144,7 +1165,7 @@ static void AddDllCategory(std::vector<PickerCategory>& out, const std::wstring&
 		item.builtInIndex = -1;
 		item.builtInOffset = 0;
 		item.resourcePath = filePath;
-		item.resourceIndex = (int) i;
+		item.resourceIndex = (int)i;
 		item.label = label;
 		item.cachedIcon = NULL;
 		item.ownsCachedIcon = FALSE;
@@ -1154,12 +1175,11 @@ static void AddDllCategory(std::vector<PickerCategory>& out, const std::wstring&
 	out.push_back(cat);
 }
 
-
 /**
  * Add one DLL/EXE category using a known icon count from discovery cache.
  */
-static void AddDllCategoryWithKnownIconCount(std::vector<PickerCategory>& out, const std::wstring& categoryName,
-	const std::wstring& filePath, UINT iconCount)
+static void AddDllCategoryWithKnownIconCount(std::vector<PickerCategory> &out, const std::wstring &categoryName,
+											 const std::wstring &filePath, UINT iconCount)
 {
 	if ((iconCount == UINT_MAX) || (iconCount == 0))
 		return;
@@ -1176,7 +1196,7 @@ static void AddDllCategoryWithKnownIconCount(std::vector<PickerCategory>& out, c
 		item.builtInIndex = -1;
 		item.builtInOffset = 0;
 		item.resourcePath = filePath;
-		item.resourceIndex = (int) i;
+		item.resourceIndex = (int)i;
 		item.label = label;
 		item.cachedIcon = NULL;
 		item.ownsCachedIcon = FALSE;
@@ -1186,11 +1206,10 @@ static void AddDllCategoryWithKnownIconCount(std::vector<PickerCategory>& out, c
 	out.push_back(cat);
 }
 
-
 /**
  * Add one ICO folder category (.ico files only).
  */
-static void AddIcoFolderCategory(std::vector<PickerCategory>& out, const std::wstring& categoryName, const std::wstring& folderPath)
+static void AddIcoFolderCategory(std::vector<PickerCategory> &out, const std::wstring &categoryName, const std::wstring &folderPath)
 {
 	std::vector<std::wstring> icoFiles;
 	std::wstring pattern = folderPath + L"\\*.ico";
@@ -1203,8 +1222,7 @@ static void AddIcoFolderCategory(std::vector<PickerCategory>& out, const std::ws
 			if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
 				continue;
 			icoFiles.push_back(folderPath + L"\\" + fd.cFileName);
-		}
-		while (FindNextFileW(hFind, &fd));
+		} while (FindNextFileW(hFind, &fd));
 		FindClose(hFind);
 	}
 
@@ -1230,11 +1248,10 @@ static void AddIcoFolderCategory(std::vector<PickerCategory>& out, const std::ws
 	out.push_back(cat);
 }
 
-
 /**
  * Format a relative icons path as a picker category label.
  */
-static std::wstring FormatCustomCategoryPath(const std::wstring& relPath)
+static std::wstring FormatCustomCategoryPath(const std::wstring &relPath)
 {
 	if (relPath.empty())
 		return L"Custom ICO";
@@ -1246,11 +1263,10 @@ static std::wstring FormatCustomCategoryPath(const std::wstring& relPath)
 	return label;
 }
 
-
 /**
  * Recursively collect custom categories from install/icons.
  */
-static void CollectCustomCategories(std::vector<PickerCategory>& out, const std::wstring& rootIconsPath, const std::wstring& dirPath)
+static void CollectCustomCategories(std::vector<PickerCategory> &out, const std::wstring &rootIconsPath, const std::wstring &dirPath)
 {
 	WCHAR relPath[MAX_PATH] = {};
 	PathRelativePathToW(relPath, rootIconsPath.c_str(), FILE_ATTRIBUTE_DIRECTORY, dirPath.c_str(), FILE_ATTRIBUTE_DIRECTORY);
@@ -1286,22 +1302,20 @@ static void CollectCustomCategories(std::vector<PickerCategory>& out, const std:
 			if (ext && (_wcsicmp(ext, L".dll") == 0))
 			{
 				std::wstring dllLabel = rel.empty()
-					? std::wstring(fd.cFileName)
-					: (FormatCustomCategoryPath(rel) + L" - " + fd.cFileName);
+											? std::wstring(fd.cFileName)
+											: (FormatCustomCategoryPath(rel) + L" - " + fd.cFileName);
 				AddDllCategory(out, dllLabel, full);
 			}
 		}
-	}
-	while (FindNextFileW(hFind, &fd));
+	} while (FindNextFileW(hFind, &fd));
 
 	FindClose(hFind);
 }
 
-
 /**
  * Build all picker categories dynamically.
  */
-static void BuildPickerCategories(std::vector<PickerCategory>& out)
+static void BuildPickerCategories(std::vector<PickerCategory> &out)
 {
 	out.clear();
 	AddColorsCategory(out, L"Windows 11 Colored", WIN11_ICON_OFFSET);
@@ -1331,7 +1345,6 @@ static void BuildPickerCategories(std::vector<PickerCategory>& out)
 	}
 }
 
-
 /**
  * Populate the right-side icon list for the selected category.
  */
@@ -1343,26 +1356,24 @@ static void PopulatePickerItems(HWND hWnd, int categoryIndex)
 	RebuildPickerVisibleItems(categoryIndex);
 	for (size_t i = 0; i < gPickerVisibleItems.size(); i++)
 	{
-		LRESULT idx = SendMessageW(hItem, LB_ADDSTRING, 0, (LPARAM) gPickerVisibleItems[i].displayLabel.c_str());
+		LRESULT idx = SendMessageW(hItem, LB_ADDSTRING, 0, (LPARAM)gPickerVisibleItems[i].displayLabel.c_str());
 		if (idx != LB_ERR)
-			SendMessageW(hItem, LB_SETITEMDATA, (WPARAM) idx, (LPARAM) i);
+			SendMessageW(hItem, LB_SETITEMDATA, (WPARAM)idx, (LPARAM)i);
 	}
 
 	if (!gPickerVisibleItems.empty())
 		SendMessageW(hItem, LB_SETCURSEL, 0, 0);
 }
 
-
 /**
  * Enable or disable picker delete button from current selection.
  */
 static void UpdatePickerDeleteButtonState(HWND hWnd);
-static BOOL RenameCustomPickerItem(HWND hWnd, const PickerItem& item, const std::wstring& requestedName);
+static BOOL RenameCustomPickerItem(HWND hWnd, const PickerItem &item, const std::wstring &requestedName);
 static std::wstring GetIconDisplayName(LPCWSTR dllPath, UINT iconIndex);
 static std::wstring LoadIconNameFromDll(LPCWSTR dllPath, UINT iconIndex);
 static BOOL IsCustomIconDll(LPCWSTR dllPath);
 static BOOL DeleteCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex);
-
 
 /**
  * Apply current search text to item list immediately.
@@ -1371,11 +1382,10 @@ static void ApplyPickerSearchNow(HWND hWnd)
 {
 	UpdatePickerSearchQuery(hWnd);
 	HWND hCat = GetDlgItem(hWnd, IDC_PICKER_CATEGORY);
-	int sel = (int) SendMessageW(hCat, LB_GETCURSEL, 0, 0);
+	int sel = (int)SendMessageW(hCat, LB_GETCURSEL, 0, 0);
 	PopulatePickerItems(hWnd, sel);
 	UpdatePickerDeleteButtonState(hWnd);
 }
-
 
 /**
  * Populate the left-side categories list.
@@ -1386,12 +1396,12 @@ static void PopulatePickerCategories(HWND hWnd)
 	SendMessageW(hCat, LB_RESETCONTENT, 0, 0);
 
 	for (size_t i = 0; i < gPickerCategories.size(); i++)
-		SendMessageW(hCat, LB_ADDSTRING, 0, (LPARAM) gPickerCategories[i].name.c_str());
+		SendMessageW(hCat, LB_ADDSTRING, 0, (LPARAM)gPickerCategories[i].name.c_str());
 
 	if (!gPickerCategories.empty())
 	{
 		int defaultCategory = GetDefaultColorCategoryIndex();
-		if ((defaultCategory < 0) || (defaultCategory >= (int) gPickerCategories.size()))
+		if ((defaultCategory < 0) || (defaultCategory >= (int)gPickerCategories.size()))
 			defaultCategory = 0;
 
 		SendMessageW(hCat, LB_SETCURSEL, defaultCategory, 0);
@@ -1406,11 +1416,10 @@ static void PopulatePickerCategories(HWND hWnd)
 	}
 }
 
-
 /**
  * Resolve item icon (lazy cache).
  */
-static HICON ResolvePickerItemIcon(PickerItem& item)
+static HICON ResolvePickerItemIcon(PickerItem &item)
 {
 	if (item.cachedIcon)
 		return item.cachedIcon;
@@ -1436,7 +1445,7 @@ static HICON ResolvePickerItemIcon(PickerItem& item)
 	LPCWSTR ext = PathFindExtensionW(item.resourcePath.c_str());
 	if (ext && (_wcsicmp(ext, L".ico") == 0))
 	{
-		item.cachedIcon = (HICON) LoadImageW(NULL, item.resourcePath.c_str(), IMAGE_ICON, 16, 16, LR_LOADFROMFILE);
+		item.cachedIcon = (HICON)LoadImageW(NULL, item.resourcePath.c_str(), IMAGE_ICON, 16, 16, LR_LOADFROMFILE);
 		item.ownsCachedIcon = (item.cachedIcon != NULL);
 		return item.cachedIcon;
 	}
@@ -1454,7 +1463,6 @@ static HICON ResolvePickerItemIcon(PickerItem& item)
 	return item.cachedIcon;
 }
 
-
 /**
  * Release the current preview icon, if owned.
  */
@@ -1462,9 +1470,9 @@ static void ReleasePickerPreviewIcon()
 {
 	if (gPickerPreviewOwnsIcon && gPickerPreviewIcon)
 		DestroyIcon(gPickerPreviewIcon);
-	gPickerPreviewIcon      = NULL;
-	gPickerPreviewOwnsIcon  = FALSE;
-	gPickerPreviewIsFolder  = FALSE;
+	gPickerPreviewIcon = NULL;
+	gPickerPreviewOwnsIcon = FALSE;
+	gPickerPreviewIsFolder = FALSE;
 	gPickerPreviewIsDefault = FALSE;
 }
 
@@ -1474,7 +1482,8 @@ static void ReleasePickerPreviewIcon()
 static void UpdatePickerPreviewLabel(HWND hWnd)
 {
 	HWND hLabel = GetDlgItem(hWnd, IDC_PICKER_PREVIEW_LABEL);
-	if (!hLabel) return;
+	if (!hLabel)
+		return;
 	if (gPickerPreviewIsDefault)
 		SetWindowTextW(hLabel, L"Default OS icon  (click for current)");
 	else if (gPickerPreviewIsFolder)
@@ -1500,22 +1509,21 @@ static void LoadFolderCurrentPreviewIcon()
 
 	// Read current icon assignment from folder's desktop.ini.
 	SHFOLDERCUSTOMSETTINGS pfcs = {};
-	pfcs.dwSize  = sizeof(SHFOLDERCUSTOMSETTINGS);
-	pfcs.dwMask  = FCSM_ICONFILE;
+	pfcs.dwSize = sizeof(SHFOLDERCUSTOMSETTINGS);
+	pfcs.dwMask = FCSM_ICONFILE;
 	WCHAR iconPath[MAX_PATH] = {};
-	pfcs.pszIconFile  = iconPath;
-	pfcs.cchIconFile  = MAX_PATH;
+	pfcs.pszIconFile = iconPath;
+	pfcs.cchIconFile = MAX_PATH;
 
-	BOOL hasCustomIcon = SUCCEEDED(SHGetSetFolderCustomSettings(&pfcs, gPickerTargetFolder.c_str(), FCS_READ))
-	                     && iconPath[0];
+	BOOL hasCustomIcon = SUCCEEDED(SHGetSetFolderCustomSettings(&pfcs, gPickerTargetFolder.c_str(), FCS_READ)) && iconPath[0];
 
 	if (hasCustomIcon)
 	{
-		HICON hIco  = NULL;
-		UINT  iconId = 0;
+		HICON hIco = NULL;
+		UINT iconId = 0;
 		if (PrivateExtractIconsW(iconPath, pfcs.iIconIndex, 256, 256, &hIco, &iconId, 1, 0) > 0 && hIco)
 		{
-			gPickerPreviewIcon     = hIco;
+			gPickerPreviewIcon = hIco;
 			gPickerPreviewOwnsIcon = TRUE;
 			gPickerPreviewIsFolder = TRUE;
 		}
@@ -1528,13 +1536,13 @@ static void LoadFolderCurrentPreviewIcon()
 	sii.cbSize = sizeof(sii);
 	if (SUCCEEDED(SHGetStockIconInfo(SIID_FOLDER, SHGSI_ICONLOCATION, &sii)))
 	{
-		HICON hIco  = NULL;
-		UINT  iconId = 0;
+		HICON hIco = NULL;
+		UINT iconId = 0;
 		if (PrivateExtractIconsW(sii.szPath, sii.iIcon, 256, 256, &hIco, &iconId, 1, 0) > 0 && hIco)
 		{
-			gPickerPreviewIcon      = hIco;
-			gPickerPreviewOwnsIcon  = TRUE;
-			gPickerPreviewIsFolder  = TRUE;
+			gPickerPreviewIcon = hIco;
+			gPickerPreviewOwnsIcon = TRUE;
+			gPickerPreviewIsFolder = TRUE;
 			gPickerPreviewIsDefault = TRUE;
 			return;
 		}
@@ -1543,11 +1551,12 @@ static void LoadFolderCurrentPreviewIcon()
 	// Fallback path: ask shell directly for the folder icon handle.
 	SHFILEINFOW sfi = {};
 	if (SHGetFileInfoW(gPickerTargetFolder.c_str(), FILE_ATTRIBUTE_DIRECTORY, &sfi, sizeof(sfi),
-		SHGFI_ICON | SHGFI_LARGEICON | SHGFI_USEFILEATTRIBUTES) && sfi.hIcon)
+					   SHGFI_ICON | SHGFI_LARGEICON | SHGFI_USEFILEATTRIBUTES) &&
+		sfi.hIcon)
 	{
-		gPickerPreviewIcon      = sfi.hIcon;
-		gPickerPreviewOwnsIcon  = TRUE;
-		gPickerPreviewIsFolder  = TRUE;
+		gPickerPreviewIcon = sfi.hIcon;
+		gPickerPreviewOwnsIcon = TRUE;
+		gPickerPreviewIsFolder = TRUE;
 		gPickerPreviewIsDefault = TRUE;
 	}
 }
@@ -1558,12 +1567,12 @@ static void LoadFolderCurrentPreviewIcon()
  * Uses PrivateExtractIconsW so the same file-offset index convention as
  * ExtractIconExW applies for both built-in (EXE) and external (DLL/ICO) sources.
  */
-static void LoadPickerPreviewIcon(PickerItem& item)
+static void LoadPickerPreviewIcon(PickerItem &item)
 {
 	ReleasePickerPreviewIcon();
 
 	WCHAR resourcePath[MAX_PATH] = {};
-	int   resourceIndex = 0;
+	int resourceIndex = 0;
 
 	if (item.isBuiltIn)
 	{
@@ -1578,11 +1587,11 @@ static void LoadPickerPreviewIcon(PickerItem& item)
 	}
 
 	HICON hLarge = NULL;
-	UINT  iconId  = 0;
+	UINT iconId = 0;
 	// Request 256x256; Windows picks the best available frame from the icon data.
 	if (PrivateExtractIconsW(resourcePath, resourceIndex, 256, 256, &hLarge, &iconId, 1, 0) > 0 && hLarge)
 	{
-		gPickerPreviewIcon     = hLarge;
+		gPickerPreviewIcon = hLarge;
 		gPickerPreviewOwnsIcon = TRUE;
 	}
 }
@@ -1596,7 +1605,7 @@ static void ReleasePickerIcons()
 	{
 		for (size_t i = 0; i < gPickerCategories[c].items.size(); i++)
 		{
-			PickerItem& item = gPickerCategories[c].items[i];
+			PickerItem &item = gPickerCategories[c].items[i];
 			if (item.ownsCachedIcon && item.cachedIcon)
 				DestroyIcon(item.cachedIcon);
 			item.cachedIcon = NULL;
@@ -1605,10 +1614,9 @@ static void ReleasePickerIcons()
 	}
 }
 
-
 /** Release COM pointers safely. */
-template<typename T>
-static void SafeReleaseCom(T*& ptr)
+template <typename T>
+static void SafeReleaseCom(T *&ptr)
 {
 	if (ptr)
 	{
@@ -1616,7 +1624,6 @@ static void SafeReleaseCom(T*& ptr)
 		ptr = NULL;
 	}
 }
-
 
 #pragma pack(push, 1)
 struct DerivedIcoHeader
@@ -1639,18 +1646,16 @@ struct DerivedIcoEntry
 };
 #pragma pack(pop)
 
-
 /** Build and ensure the derived icons folder path exists. */
-static BOOL EnsureDerivedIconsFolder(std::wstring& outFolder)
+static BOOL EnsureDerivedIconsFolder(std::wstring &outFolder)
 {
 	outFolder = std::wstring(myPathGlobal) + L"icons\\Derived Icons";
 	int shres = SHCreateDirectoryExW(NULL, outFolder.c_str(), NULL);
 	return (shres == ERROR_SUCCESS) || (shres == ERROR_ALREADY_EXISTS) || (shres == ERROR_FILE_EXISTS);
 }
 
-
 /** Build a destination path that does not collide with existing files. */
-static std::wstring MakeUniqueDestinationPathMain(const std::wstring& dirPath, const std::wstring& fileName)
+static std::wstring MakeUniqueDestinationPathMain(const std::wstring &dirPath, const std::wstring &fileName)
 {
 	WCHAR baseName[MAX_PATH] = {};
 	WCHAR extension[MAX_PATH] = {};
@@ -1674,9 +1679,8 @@ static std::wstring MakeUniqueDestinationPathMain(const std::wstring& dirPath, c
 	return std::wstring();
 }
 
-
 /** Return a copy trimmed from both ends by spaces, tabs, CR and LF. */
-static std::wstring TrimWhitespaceCopy(const std::wstring& value)
+static std::wstring TrimWhitespaceCopy(const std::wstring &value)
 {
 	if (value.empty())
 		return std::wstring();
@@ -1692,9 +1696,8 @@ static std::wstring TrimWhitespaceCopy(const std::wstring& value)
 	return value.substr(start, end - start);
 }
 
-
 /** Remove an extension from one name-like value. */
-static std::wstring RemoveExtensionCopy(const std::wstring& value)
+static std::wstring RemoveExtensionCopy(const std::wstring &value)
 {
 	if (value.empty())
 		return std::wstring();
@@ -1706,11 +1709,10 @@ static std::wstring RemoveExtensionCopy(const std::wstring& value)
 
 	LPCWSTR ext = PathFindExtensionW(name.c_str());
 	if (ext && ext[0])
-		name.resize((size_t) (ext - name.c_str()));
+		name.resize((size_t)(ext - name.c_str()));
 
 	return name;
 }
-
 
 /** Return TRUE when one character is not allowed in a Windows file/folder name. */
 static BOOL IsInvalidWindowsNameChar(WCHAR ch)
@@ -1719,12 +1721,11 @@ static BOOL IsInvalidWindowsNameChar(WCHAR ch)
 		return TRUE;
 
 	return (ch == L'<' || ch == L'>' || ch == L':' || ch == L'"' || ch == L'/' ||
-		ch == L'\\' || ch == L'|' || ch == L'?' || ch == L'*');
+			ch == L'\\' || ch == L'|' || ch == L'?' || ch == L'*');
 }
 
-
 /** Sanitize one path segment for directory usage. */
-static std::wstring SanitizeCategorySegment(const std::wstring& rawSegment)
+static std::wstring SanitizeCategorySegment(const std::wstring &rawSegment)
 {
 	std::wstring trimmed = TrimWhitespaceCopy(rawSegment);
 	if (trimmed.empty())
@@ -1746,9 +1747,8 @@ static std::wstring SanitizeCategorySegment(const std::wstring& rawSegment)
 	return sanitized;
 }
 
-
 /** Sanitize icon file stem (without extension) by removing invalid filename characters. */
-static std::wstring SanitizeIconFileStem(const std::wstring& rawName)
+static std::wstring SanitizeIconFileStem(const std::wstring &rawName)
 {
 	std::wstring trimmed = TrimWhitespaceCopy(rawName);
 	std::wstring sanitized;
@@ -1766,7 +1766,6 @@ static std::wstring SanitizeIconFileStem(const std::wstring& rawName)
 
 	return sanitized;
 }
-
 
 /** Build default icon name from base icon plus first user layer. */
 static std::wstring BuildDefaultDerivedIconName()
@@ -1792,9 +1791,8 @@ static std::wstring BuildDefaultDerivedIconName()
 	return combined;
 }
 
-
 /** Parse category input supporting both '/' and '\\' as nested folder separators. */
-static std::vector<std::wstring> ParseCategorySegments(const std::wstring& categoryInput)
+static std::vector<std::wstring> ParseCategorySegments(const std::wstring &categoryInput)
 {
 	std::vector<std::wstring> segments;
 	std::wstring current;
@@ -1821,9 +1819,8 @@ static std::vector<std::wstring> ParseCategorySegments(const std::wstring& categ
 	return segments;
 }
 
-
 /** Resolve and ensure icons\{Category} path exists from raw category input. */
-static BOOL BuildDerivedCategoryFolderPath(const std::wstring& categoryInput, std::wstring& outFolder)
+static BOOL BuildDerivedCategoryFolderPath(const std::wstring &categoryInput, std::wstring &outFolder)
 {
 	outFolder.clear();
 
@@ -1850,7 +1847,6 @@ static BOOL BuildDerivedCategoryFolderPath(const std::wstring& categoryInput, st
 	return TRUE;
 }
 
-
 /** Save dialog window procedure for Category/Name input. */
 static LRESULT CALLBACK DerivedSaveDialogWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -1858,123 +1854,122 @@ static LRESULT CALLBACK DerivedSaveDialogWndProc(HWND hWnd, UINT msg, WPARAM wPa
 
 	switch (msg)
 	{
-		case WM_CREATE:
+	case WM_CREATE:
+	{
+		CreateWindowW(L"STATIC", L"Category", WS_CHILD | WS_VISIBLE,
+					  12, 12, 336, 18, hWnd, (HMENU)IDC_DERIVED_SAVE_CATEGORY_LABEL, NULL, NULL);
+		CreateWindowW(L"EDIT", gDerivedSaveDialog.category.c_str(), WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+					  12, 32, 336, 24, hWnd, (HMENU)IDC_DERIVED_SAVE_CATEGORY_EDIT, NULL, NULL);
+
+		CreateWindowW(L"STATIC", L"Name", WS_CHILD | WS_VISIBLE,
+					  12, 64, 336, 18, hWnd, (HMENU)IDC_DERIVED_SAVE_NAME_LABEL, NULL, NULL);
+		CreateWindowW(L"EDIT", gDerivedSaveDialog.name.c_str(), WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+					  12, 84, 336, 24, hWnd, (HMENU)IDC_DERIVED_SAVE_NAME_EDIT, NULL, NULL);
+
+		CreateWindowW(L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+					  176, 122, 82, 28, hWnd, (HMENU)IDC_DERIVED_SAVE_OK, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
+					  266, 122, 82, 28, hWnd, (HMENU)IDC_DERIVED_SAVE_CANCEL, NULL, NULL);
+
+		SetFocus(GetDlgItem(hWnd, IDC_DERIVED_SAVE_NAME_EDIT));
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SAVE_NAME_EDIT), EM_SETSEL, 0, -1);
+		ApplyRuntimeTheme(hWnd);
+		return 0;
+	}
+
+	case WM_THEMECHANGED:
+	case WM_SYSCOLORCHANGE:
+	case WM_SETTINGCHANGE:
+		ApplyRuntimeTheme(hWnd);
+		return 0;
+
+	case WM_ERASEBKGND:
+	{
+		RECT rc = {};
+		GetClientRect(hWnd, &rc);
+		FillRect((HDC)wParam, &rc, gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+		return 1;
+	}
+
+	case WM_CTLCOLORSTATIC:
+	{
+		HDC hdc = (HDC)wParam;
+		SetTextColor(hdc, gRuntimeTextColor);
+		SetBkColor(hdc, gRuntimeBackgroundColor);
+		return (LRESULT)(gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+	}
+
+	case WM_CTLCOLOREDIT:
+	{
+		HDC hdc = (HDC)wParam;
+		SetTextColor(hdc, gRuntimeTextColor);
+		SetBkColor(hdc, gRuntimePanelColor);
+		return (LRESULT)(gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
+	}
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam))
 		{
-			CreateWindowW(L"STATIC", L"Category", WS_CHILD | WS_VISIBLE,
-				12, 12, 336, 18, hWnd, (HMENU) IDC_DERIVED_SAVE_CATEGORY_LABEL, NULL, NULL);
-			CreateWindowW(L"EDIT", gDerivedSaveDialog.category.c_str(), WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				12, 32, 336, 24, hWnd, (HMENU) IDC_DERIVED_SAVE_CATEGORY_EDIT, NULL, NULL);
-
-			CreateWindowW(L"STATIC", L"Name", WS_CHILD | WS_VISIBLE,
-				12, 64, 336, 18, hWnd, (HMENU) IDC_DERIVED_SAVE_NAME_LABEL, NULL, NULL);
-			CreateWindowW(L"EDIT", gDerivedSaveDialog.name.c_str(), WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				12, 84, 336, 24, hWnd, (HMENU) IDC_DERIVED_SAVE_NAME_EDIT, NULL, NULL);
-
-			CreateWindowW(L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-				176, 122, 82, 28, hWnd, (HMENU) IDC_DERIVED_SAVE_OK, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
-				266, 122, 82, 28, hWnd, (HMENU) IDC_DERIVED_SAVE_CANCEL, NULL, NULL);
-
-			SetFocus(GetDlgItem(hWnd, IDC_DERIVED_SAVE_NAME_EDIT));
-			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SAVE_NAME_EDIT), EM_SETSEL, 0, -1);
-			ApplyRuntimeTheme(hWnd);
-			return 0;
-		}
-
-		case WM_THEMECHANGED:
-		case WM_SYSCOLORCHANGE:
-		case WM_SETTINGCHANGE:
-			ApplyRuntimeTheme(hWnd);
-			return 0;
-
-		case WM_ERASEBKGND:
+		case IDC_DERIVED_SAVE_OK:
 		{
-			RECT rc = {};
-			GetClientRect(hWnd, &rc);
-			FillRect((HDC) wParam, &rc, gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
-			return 1;
-		}
+			WCHAR categoryBuf[512] = {};
+			WCHAR nameBuf[512] = {};
+			GetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_SAVE_CATEGORY_EDIT), categoryBuf, _countof(categoryBuf));
+			GetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_SAVE_NAME_EDIT), nameBuf, _countof(nameBuf));
 
-		case WM_CTLCOLORSTATIC:
-		{
-			HDC hdc = (HDC) wParam;
-			SetTextColor(hdc, gRuntimeTextColor);
-			SetBkColor(hdc, gRuntimeBackgroundColor);
-			return (LRESULT) (gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
-		}
+			std::wstring category = TrimWhitespaceCopy(categoryBuf);
+			std::wstring name = TrimWhitespaceCopy(nameBuf);
 
-		case WM_CTLCOLOREDIT:
-		{
-			HDC hdc = (HDC) wParam;
-			SetTextColor(hdc, gRuntimeTextColor);
-			SetBkColor(hdc, gRuntimePanelColor);
-			return (LRESULT) (gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
-		}
-
-		case WM_COMMAND:
-			switch (LOWORD(wParam))
+			if (ParseCategorySegments(category).empty())
 			{
-				case IDC_DERIVED_SAVE_OK:
-				{
-					WCHAR categoryBuf[512] = {};
-					WCHAR nameBuf[512] = {};
-					GetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_SAVE_CATEGORY_EDIT), categoryBuf, _countof(categoryBuf));
-					GetWindowTextW(GetDlgItem(hWnd, IDC_DERIVED_SAVE_NAME_EDIT), nameBuf, _countof(nameBuf));
-
-					std::wstring category = TrimWhitespaceCopy(categoryBuf);
-					std::wstring name = TrimWhitespaceCopy(nameBuf);
-
-					if (ParseCategorySegments(category).empty())
-					{
-						MessageBoxA(hWnd, "Category is required.", "Info:", MB_OK | MB_ICONINFORMATION);
-						SetFocus(GetDlgItem(hWnd, IDC_DERIVED_SAVE_CATEGORY_EDIT));
-						break;
-					}
-
-					name = SanitizeIconFileStem(name);
-					if (name.empty())
-					{
-						MessageBoxA(hWnd, "Name is required.", "Info:", MB_OK | MB_ICONINFORMATION);
-						SetFocus(GetDlgItem(hWnd, IDC_DERIVED_SAVE_NAME_EDIT));
-						break;
-					}
-
-					gDerivedSaveDialog.category = category;
-					gDerivedSaveDialog.name = name;
-					gDerivedSaveDialog.confirmed = TRUE;
-					DestroyWindow(hWnd);
-				}
+				MessageBoxA(hWnd, "Category is required.", "Info:", MB_OK | MB_ICONINFORMATION);
+				SetFocus(GetDlgItem(hWnd, IDC_DERIVED_SAVE_CATEGORY_EDIT));
 				break;
-
-				case IDC_DERIVED_SAVE_CANCEL:
-					DestroyWindow(hWnd);
-					break;
 			}
-			return 0;
 
-		case WM_KEYDOWN:
-			if (wParam == VK_ESCAPE)
+			name = SanitizeIconFileStem(name);
+			if (name.empty())
 			{
-				DestroyWindow(hWnd);
-				return 0;
+				MessageBoxA(hWnd, "Name is required.", "Info:", MB_OK | MB_ICONINFORMATION);
+				SetFocus(GetDlgItem(hWnd, IDC_DERIVED_SAVE_NAME_EDIT));
+				break;
 			}
-			break;
 
-		case WM_CLOSE:
+			gDerivedSaveDialog.category = category;
+			gDerivedSaveDialog.name = name;
+			gDerivedSaveDialog.confirmed = TRUE;
+			DestroyWindow(hWnd);
+		}
+		break;
+
+		case IDC_DERIVED_SAVE_CANCEL:
+			DestroyWindow(hWnd);
+			break;
+		}
+		return 0;
+
+	case WM_KEYDOWN:
+		if (wParam == VK_ESCAPE)
+		{
 			DestroyWindow(hWnd);
 			return 0;
+		}
+		break;
 
-		case WM_DESTROY:
-			return 0;
+	case WM_CLOSE:
+		DestroyWindow(hWnd);
+		return 0;
+
+	case WM_DESTROY:
+		return 0;
 	}
 
 	return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
-
 /** Show modal save dialog and return selected Category and Name. */
-static BOOL PromptDerivedSaveValues(HWND hParent, const std::wstring& initialCategory, const std::wstring& initialName,
-	std::wstring& outCategory, std::wstring& outName)
+static BOOL PromptDerivedSaveValues(HWND hParent, const std::wstring &initialCategory, const std::wstring &initialName,
+									std::wstring &outCategory, std::wstring &outName)
 {
 	outCategory.clear();
 	outName.clear();
@@ -1990,8 +1985,8 @@ static BOOL PromptDerivedSaveValues(HWND hParent, const std::wstring& initialCat
 	wc.hInstance = GetModuleHandleW(NULL);
 	wc.lpszClassName = L"FoldrionDerivedSaveDialog";
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
-	wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+	wc.hIcon = LoadIconA((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassW(&wc);
 
 	HWND hWnd = CreateWindowExW(
@@ -2008,6 +2003,7 @@ static BOOL PromptDerivedSaveValues(HWND hParent, const std::wstring& initialCat
 	gRuntimeThemeUsers++;
 	gDerivedSaveDialog.hWnd = hWnd;
 	EnableWindow(hParent, FALSE);
+	CenterPopupToOwner(hWnd, hParent);
 	ShowWindow(hWnd, SW_SHOW);
 	UpdateWindow(hWnd);
 
@@ -2036,7 +2032,6 @@ static BOOL PromptDerivedSaveValues(HWND hParent, const std::wstring& initialCat
 	return TRUE;
 }
 
-
 #define IDC_RENAME_ICON_EDIT 3040
 #define IDC_RENAME_ICON_OK 3041
 #define IDC_RENAME_ICON_CANCEL 3042
@@ -2048,103 +2043,102 @@ static LRESULT CALLBACK RenameIconDialogWndProc(HWND hWnd, UINT msg, WPARAM wPar
 
 	switch (msg)
 	{
-		case WM_CREATE:
+	case WM_CREATE:
+	{
+		CreateWindowW(L"STATIC", gRenameIconDialog.prompt.c_str(), WS_CHILD | WS_VISIBLE,
+					  12, 14, 352, 18, hWnd, NULL, NULL, NULL);
+		CreateWindowW(L"EDIT", gRenameIconDialog.value.c_str(),
+					  WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+					  12, 38, 352, 24, hWnd, (HMENU)IDC_RENAME_ICON_EDIT, NULL, NULL);
+
+		CreateWindowW(L"BUTTON", L"Rename", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+					  188, 78, 84, 28, hWnd, (HMENU)IDC_RENAME_ICON_OK, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
+					  280, 78, 84, 28, hWnd, (HMENU)IDC_RENAME_ICON_CANCEL, NULL, NULL);
+
+		HWND hEdit = GetDlgItem(hWnd, IDC_RENAME_ICON_EDIT);
+		SetFocus(hEdit);
+		SendMessageW(hEdit, EM_SETSEL, 0, -1);
+		ApplyRuntimeTheme(hWnd);
+		return 0;
+	}
+
+	case WM_THEMECHANGED:
+	case WM_SYSCOLORCHANGE:
+	case WM_SETTINGCHANGE:
+		ApplyRuntimeTheme(hWnd);
+		return 0;
+
+	case WM_ERASEBKGND:
+	{
+		RECT rc = {};
+		GetClientRect(hWnd, &rc);
+		FillRect((HDC)wParam, &rc, gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+		return 1;
+	}
+
+	case WM_CTLCOLORSTATIC:
+	{
+		HDC hdc = (HDC)wParam;
+		SetTextColor(hdc, gRuntimeTextColor);
+		SetBkColor(hdc, gRuntimeBackgroundColor);
+		return (LRESULT)(gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+	}
+
+	case WM_CTLCOLOREDIT:
+	{
+		HDC hdc = (HDC)wParam;
+		SetTextColor(hdc, gRuntimeTextColor);
+		SetBkColor(hdc, gRuntimePanelColor);
+		return (LRESULT)(gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
+	}
+
+	case WM_COMMAND:
+		switch (LOWORD(wParam))
 		{
-			CreateWindowW(L"STATIC", gRenameIconDialog.prompt.c_str(), WS_CHILD | WS_VISIBLE,
-				12, 14, 352, 18, hWnd, NULL, NULL, NULL);
-			CreateWindowW(L"EDIT", gRenameIconDialog.value.c_str(),
-				WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				12, 38, 352, 24, hWnd, (HMENU) IDC_RENAME_ICON_EDIT, NULL, NULL);
-
-			CreateWindowW(L"BUTTON", L"Rename", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-				188, 78, 84, 28, hWnd, (HMENU) IDC_RENAME_ICON_OK, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
-				280, 78, 84, 28, hWnd, (HMENU) IDC_RENAME_ICON_CANCEL, NULL, NULL);
-
-			HWND hEdit = GetDlgItem(hWnd, IDC_RENAME_ICON_EDIT);
-			SetFocus(hEdit);
-			SendMessageW(hEdit, EM_SETSEL, 0, -1);
-			ApplyRuntimeTheme(hWnd);
-			return 0;
-		}
-
-		case WM_THEMECHANGED:
-		case WM_SYSCOLORCHANGE:
-		case WM_SETTINGCHANGE:
-			ApplyRuntimeTheme(hWnd);
-			return 0;
-
-		case WM_ERASEBKGND:
+		case IDC_RENAME_ICON_OK:
 		{
-			RECT rc = {};
-			GetClientRect(hWnd, &rc);
-			FillRect((HDC) wParam, &rc, gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
-			return 1;
-		}
-
-		case WM_CTLCOLORSTATIC:
-		{
-			HDC hdc = (HDC) wParam;
-			SetTextColor(hdc, gRuntimeTextColor);
-			SetBkColor(hdc, gRuntimeBackgroundColor);
-			return (LRESULT) (gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
-		}
-
-		case WM_CTLCOLOREDIT:
-		{
-			HDC hdc = (HDC) wParam;
-			SetTextColor(hdc, gRuntimeTextColor);
-			SetBkColor(hdc, gRuntimePanelColor);
-			return (LRESULT) (gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
-		}
-
-		case WM_COMMAND:
-			switch (LOWORD(wParam))
+			WCHAR valueBuf[512] = {};
+			GetWindowTextW(GetDlgItem(hWnd, IDC_RENAME_ICON_EDIT), valueBuf, _countof(valueBuf));
+			std::wstring value = TrimWhitespaceCopy(valueBuf);
+			if (value.empty())
 			{
-				case IDC_RENAME_ICON_OK:
-				{
-					WCHAR valueBuf[512] = {};
-					GetWindowTextW(GetDlgItem(hWnd, IDC_RENAME_ICON_EDIT), valueBuf, _countof(valueBuf));
-					std::wstring value = TrimWhitespaceCopy(valueBuf);
-					if (value.empty())
-					{
-						MessageBoxA(hWnd, "Name is required.", "Info:", MB_OK | MB_ICONINFORMATION);
-						SetFocus(GetDlgItem(hWnd, IDC_RENAME_ICON_EDIT));
-						break;
-					}
-
-					gRenameIconDialog.value = value;
-					gRenameIconDialog.confirmed = TRUE;
-					DestroyWindow(hWnd);
-				}
+				MessageBoxA(hWnd, "Name is required.", "Info:", MB_OK | MB_ICONINFORMATION);
+				SetFocus(GetDlgItem(hWnd, IDC_RENAME_ICON_EDIT));
 				break;
-
-				case IDC_RENAME_ICON_CANCEL:
-					DestroyWindow(hWnd);
-					break;
 			}
-			return 0;
 
-		case WM_KEYDOWN:
-			if (wParam == VK_ESCAPE)
-			{
-				DestroyWindow(hWnd);
-				return 0;
-			}
+			gRenameIconDialog.value = value;
+			gRenameIconDialog.confirmed = TRUE;
+			DestroyWindow(hWnd);
+		}
+		break;
+
+		case IDC_RENAME_ICON_CANCEL:
+			DestroyWindow(hWnd);
 			break;
+		}
+		return 0;
 
-		case WM_CLOSE:
+	case WM_KEYDOWN:
+		if (wParam == VK_ESCAPE)
+		{
 			DestroyWindow(hWnd);
 			return 0;
+		}
+		break;
+
+	case WM_CLOSE:
+		DestroyWindow(hWnd);
+		return 0;
 	}
 
 	return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
-
 /** Show a modal rename dialog and return the typed value when confirmed. */
-static BOOL ShowRenameIconDialog(HWND hParent, const std::wstring& title, const std::wstring& prompt,
-	const std::wstring& initialValue, std::wstring& outValue)
+static BOOL ShowRenameIconDialog(HWND hParent, const std::wstring &title, const std::wstring &prompt,
+								 const std::wstring &initialValue, std::wstring &outValue)
 {
 	outValue.clear();
 
@@ -2160,8 +2154,8 @@ static BOOL ShowRenameIconDialog(HWND hParent, const std::wstring& title, const 
 	wc.hInstance = GetModuleHandleW(NULL);
 	wc.lpszClassName = L"FoldrionRenameIconDialog";
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
-	wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+	wc.hIcon = LoadIconA((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassW(&wc);
 
 	HWND hWnd = CreateWindowExW(
@@ -2178,6 +2172,7 @@ static BOOL ShowRenameIconDialog(HWND hParent, const std::wstring& title, const 
 	gRuntimeThemeUsers++;
 	gRenameIconDialog.hWnd = hWnd;
 	EnableWindow(hParent, FALSE);
+	CenterPopupToOwner(hWnd, hParent);
 	ShowWindow(hWnd, SW_SHOW);
 	UpdateWindow(hWnd);
 
@@ -2205,9 +2200,8 @@ static BOOL ShowRenameIconDialog(HWND hParent, const std::wstring& title, const 
 	return TRUE;
 }
 
-
 /** Convert any supported image file to 32bpp BGRA pixels. */
-static HRESULT LoadImageFileAsBgra(LPCWSTR sourcePath, std::vector<BYTE>& pixels, UINT& width, UINT& height)
+static HRESULT LoadImageFileAsBgra(LPCWSTR sourcePath, std::vector<BYTE> &pixels, UINT &width, UINT &height)
 {
 	width = 0;
 	height = 0;
@@ -2218,10 +2212,10 @@ static HRESULT LoadImageFileAsBgra(LPCWSTR sourcePath, std::vector<BYTE>& pixels
 	if ((hr != S_OK) && (hr != S_FALSE) && (hr != RPC_E_CHANGED_MODE))
 		return hr;
 
-	IWICImagingFactory* factory = NULL;
-	IWICBitmapDecoder* decoder = NULL;
-	IWICBitmapFrameDecode* frame = NULL;
-	IWICFormatConverter* converter = NULL;
+	IWICImagingFactory *factory = NULL;
+	IWICBitmapDecoder *decoder = NULL;
+	IWICBitmapFrameDecode *frame = NULL;
+	IWICFormatConverter *converter = NULL;
 
 	do
 	{
@@ -2254,10 +2248,9 @@ static HRESULT LoadImageFileAsBgra(LPCWSTR sourcePath, std::vector<BYTE>& pixels
 			break;
 
 		UINT stride = width * 4;
-		pixels.resize((size_t) stride * height);
-		hr = converter->CopyPixels(NULL, stride, (UINT) pixels.size(), pixels.data());
-	}
-	while (FALSE);
+		pixels.resize((size_t)stride * height);
+		hr = converter->CopyPixels(NULL, stride, (UINT)pixels.size(), pixels.data());
+	} while (FALSE);
 
 	SafeReleaseCom(converter);
 	SafeReleaseCom(frame);
@@ -2277,21 +2270,20 @@ static HRESULT LoadImageFileAsBgra(LPCWSTR sourcePath, std::vector<BYTE>& pixels
 	return hr;
 }
 
-
 /** Render one extracted icon frame as a square BGRA bitmap. */
-static BOOL RenderIconToSquareBgra(HICON hIcon, UINT size, std::vector<BYTE>& pixels)
+static BOOL RenderIconToSquareBgra(HICON hIcon, UINT size, std::vector<BYTE> &pixels)
 {
-	pixels.assign((size_t) size * size * 4, 0);
+	pixels.assign((size_t)size * size * 4, 0);
 
 	BITMAPINFO bmi = {};
 	bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-	bmi.bmiHeader.biWidth = (LONG) size;
-	bmi.bmiHeader.biHeight = -(LONG) size;
+	bmi.bmiHeader.biWidth = (LONG)size;
+	bmi.bmiHeader.biHeight = -(LONG)size;
 	bmi.bmiHeader.biPlanes = 1;
 	bmi.bmiHeader.biBitCount = 32;
 	bmi.bmiHeader.biCompression = BI_RGB;
 
-	void* dibBits = NULL;
+	void *dibBits = NULL;
 	HDC screenDc = GetDC(NULL);
 	if (!screenDc)
 		return FALSE;
@@ -2323,9 +2315,8 @@ static BOOL RenderIconToSquareBgra(HICON hIcon, UINT size, std::vector<BYTE>& pi
 	return TRUE;
 }
 
-
 /** Load a picker item as a square 256x256 BGRA base image. */
-static BOOL LoadPickerItemAsBaseBgra(const PickerItem& item, std::vector<BYTE>& pixels)
+static BOOL LoadPickerItemAsBaseBgra(const PickerItem &item, std::vector<BYTE> &pixels)
 {
 	WCHAR resourcePath[MAX_PATH] = {};
 	int resourceIndex = 0;
@@ -2352,21 +2343,22 @@ static BOOL LoadPickerItemAsBaseBgra(const PickerItem& item, std::vector<BYTE>& 
 	return ok;
 }
 
-
 /** Resize a square BGRA image to another square size using nearest-neighbor. */
-static std::vector<BYTE> ResizeSquareNearest(const std::vector<BYTE>& src, UINT srcSize, UINT dstSize)
+static std::vector<BYTE> ResizeSquareNearest(const std::vector<BYTE> &src, UINT srcSize, UINT dstSize)
 {
-	std::vector<BYTE> dst((size_t) dstSize * dstSize * 4, 0);
+	std::vector<BYTE> dst((size_t)dstSize * dstSize * 4, 0);
 	for (UINT y = 0; y < dstSize; y++)
 	{
-		UINT sy = (UINT) (((UINT64) y * srcSize) / dstSize);
-		if (sy >= srcSize) sy = srcSize - 1;
+		UINT sy = (UINT)(((UINT64)y * srcSize) / dstSize);
+		if (sy >= srcSize)
+			sy = srcSize - 1;
 		for (UINT x = 0; x < dstSize; x++)
 		{
-			UINT sx = (UINT) (((UINT64) x * srcSize) / dstSize);
-			if (sx >= srcSize) sx = srcSize - 1;
-			const BYTE* s = &src[((size_t) sy * srcSize + sx) * 4];
-			BYTE* d = &dst[((size_t) y * dstSize + x) * 4];
+			UINT sx = (UINT)(((UINT64)x * srcSize) / dstSize);
+			if (sx >= srcSize)
+				sx = srcSize - 1;
+			const BYTE *s = &src[((size_t)sy * srcSize + sx) * 4];
+			BYTE *d = &dst[((size_t)y * dstSize + x) * 4];
 			d[0] = s[0];
 			d[1] = s[1];
 			d[2] = s[2];
@@ -2376,13 +2368,12 @@ static std::vector<BYTE> ResizeSquareNearest(const std::vector<BYTE>& src, UINT 
 	return dst;
 }
 
-
 /** Rotate hue and scale saturation for one RGB pixel. */
-static void AdjustHueSaturation(BYTE& b, BYTE& g, BYTE& r, int hueDegrees, int saturationPercent)
+static void AdjustHueSaturation(BYTE &b, BYTE &g, BYTE &r, int hueDegrees, int saturationPercent)
 {
-	double rf = (double) r / 255.0;
-	double gf = (double) g / 255.0;
-	double bf = (double) b / 255.0;
+	double rf = (double)r / 255.0;
+	double gf = (double)g / 255.0;
+	double bf = (double)b / 255.0;
 
 	double maxc = max(rf, max(gf, bf));
 	double minc = min(rf, min(gf, bf));
@@ -2404,71 +2395,136 @@ static void AdjustHueSaturation(BYTE& b, BYTE& g, BYTE& r, int hueDegrees, int s
 	double s = (maxc <= 0.0) ? 0.0 : (delta / maxc);
 	double v = maxc;
 
-	h += (double) hueDegrees;
-	while (h < 0.0) h += 360.0;
-	while (h >= 360.0) h -= 360.0;
+	h += (double)hueDegrees;
+	while (h < 0.0)
+		h += 360.0;
+	while (h >= 360.0)
+		h -= 360.0;
 
-	s *= ((double) saturationPercent / 100.0);
-	if (s < 0.0) s = 0.0;
-	if (s > 1.0) s = 1.0;
+	s *= ((double)saturationPercent / 100.0);
+	if (s < 0.0)
+		s = 0.0;
+	if (s > 1.0)
+		s = 1.0;
 
 	double c = v * s;
 	double x = c * (1.0 - fabs(fmod(h / 60.0, 2.0) - 1.0));
 	double m = v - c;
 	double rr = 0.0, gg = 0.0, bb = 0.0;
 
-	if (h < 60.0) { rr = c; gg = x; bb = 0.0; }
-	else if (h < 120.0) { rr = x; gg = c; bb = 0.0; }
-	else if (h < 180.0) { rr = 0.0; gg = c; bb = x; }
-	else if (h < 240.0) { rr = 0.0; gg = x; bb = c; }
-	else if (h < 300.0) { rr = x; gg = 0.0; bb = c; }
-	else { rr = c; gg = 0.0; bb = x; }
+	if (h < 60.0)
+	{
+		rr = c;
+		gg = x;
+		bb = 0.0;
+	}
+	else if (h < 120.0)
+	{
+		rr = x;
+		gg = c;
+		bb = 0.0;
+	}
+	else if (h < 180.0)
+	{
+		rr = 0.0;
+		gg = c;
+		bb = x;
+	}
+	else if (h < 240.0)
+	{
+		rr = 0.0;
+		gg = x;
+		bb = c;
+	}
+	else if (h < 300.0)
+	{
+		rr = x;
+		gg = 0.0;
+		bb = c;
+	}
+	else
+	{
+		rr = c;
+		gg = 0.0;
+		bb = x;
+	}
 
-	r = (BYTE) min(255.0, max(0.0, (rr + m) * 255.0));
-	g = (BYTE) min(255.0, max(0.0, (gg + m) * 255.0));
-	b = (BYTE) min(255.0, max(0.0, (bb + m) * 255.0));
+	r = (BYTE)min(255.0, max(0.0, (rr + m) * 255.0));
+	g = (BYTE)min(255.0, max(0.0, (gg + m) * 255.0));
+	b = (BYTE)min(255.0, max(0.0, (bb + m) * 255.0));
 }
 
-
 /** Colorize grayscale-like pixels using the selected hue and saturation amount. */
-static void ColorizePixelIfGray(BYTE& b, BYTE& g, BYTE& r, int hueDegrees, int saturationPercent)
+static void ColorizePixelIfGray(BYTE &b, BYTE &g, BYTE &r, int hueDegrees, int saturationPercent)
 {
-	int rb = abs((int) r - (int) b);
-	int rg = abs((int) r - (int) g);
-	int gb = abs((int) g - (int) b);
+	int rb = abs((int)r - (int)b);
+	int rg = abs((int)r - (int)g);
+	int gb = abs((int)g - (int)b);
 	if ((rb > 6) || (rg > 6) || (gb > 6))
 		return;
 
-	double hue = (double) hueDegrees;
-	while (hue < 0.0) hue += 360.0;
-	while (hue >= 360.0) hue -= 360.0;
-	double sat = (double) max(0, min(200, saturationPercent)) / 100.0;
-	if (sat > 1.0) sat = 1.0;
+	double hue = (double)hueDegrees;
+	while (hue < 0.0)
+		hue += 360.0;
+	while (hue >= 360.0)
+		hue -= 360.0;
+	double sat = (double)max(0, min(200, saturationPercent)) / 100.0;
+	if (sat > 1.0)
+		sat = 1.0;
 
-	double value = max((double) r, max((double) g, (double) b)) / 255.0;
+	double value = max((double)r, max((double)g, (double)b)) / 255.0;
 	double c = value * sat;
 	double x = c * (1.0 - fabs(fmod(hue / 60.0, 2.0) - 1.0));
 	double m = value - c;
 	double rr = 0.0, gg = 0.0, bb = 0.0;
 
-	if (hue < 60.0) { rr = c; gg = x; bb = 0.0; }
-	else if (hue < 120.0) { rr = x; gg = c; bb = 0.0; }
-	else if (hue < 180.0) { rr = 0.0; gg = c; bb = x; }
-	else if (hue < 240.0) { rr = 0.0; gg = x; bb = c; }
-	else if (hue < 300.0) { rr = x; gg = 0.0; bb = c; }
-	else { rr = c; gg = 0.0; bb = x; }
+	if (hue < 60.0)
+	{
+		rr = c;
+		gg = x;
+		bb = 0.0;
+	}
+	else if (hue < 120.0)
+	{
+		rr = x;
+		gg = c;
+		bb = 0.0;
+	}
+	else if (hue < 180.0)
+	{
+		rr = 0.0;
+		gg = c;
+		bb = x;
+	}
+	else if (hue < 240.0)
+	{
+		rr = 0.0;
+		gg = x;
+		bb = c;
+	}
+	else if (hue < 300.0)
+	{
+		rr = x;
+		gg = 0.0;
+		bb = c;
+	}
+	else
+	{
+		rr = c;
+		gg = 0.0;
+		bb = x;
+	}
 
-	r = (BYTE) min(255.0, max(0.0, (rr + m) * 255.0));
-	g = (BYTE) min(255.0, max(0.0, (gg + m) * 255.0));
-	b = (BYTE) min(255.0, max(0.0, (bb + m) * 255.0));
+	r = (BYTE)min(255.0, max(0.0, (rr + m) * 255.0));
+	g = (BYTE)min(255.0, max(0.0, (gg + m) * 255.0));
+	b = (BYTE)min(255.0, max(0.0, (bb + m) * 255.0));
 }
 
-
 /** Alpha-composite one source pixel over one destination pixel. */
-static void BlendPixelOver(BYTE* dst, BYTE sb, BYTE sg, BYTE sr, BYTE sa)
+static void BlendPixelOver(BYTE *dst, BYTE sb, BYTE sg, BYTE sr, BYTE sa)
 {
-	double srcA = (double) sa / 255.0;
-	double dstA = (double) dst[3] / 255.0;
+	double srcA = (double)sa / 255.0;
+	double dstA = (double)dst[3] / 255.0;
 	double outA = srcA + (dstA * (1.0 - srcA));
 	if (outA <= 0.000001)
 	{
@@ -2476,39 +2532,38 @@ static void BlendPixelOver(BYTE* dst, BYTE sb, BYTE sg, BYTE sr, BYTE sa)
 		return;
 	}
 
-	double outB = (((double) sb * srcA) + ((double) dst[0] * dstA * (1.0 - srcA))) / outA;
-	double outG = (((double) sg * srcA) + ((double) dst[1] * dstA * (1.0 - srcA))) / outA;
-	double outR = (((double) sr * srcA) + ((double) dst[2] * dstA * (1.0 - srcA))) / outA;
+	double outB = (((double)sb * srcA) + ((double)dst[0] * dstA * (1.0 - srcA))) / outA;
+	double outG = (((double)sg * srcA) + ((double)dst[1] * dstA * (1.0 - srcA))) / outA;
+	double outR = (((double)sr * srcA) + ((double)dst[2] * dstA * (1.0 - srcA))) / outA;
 
-	dst[0] = (BYTE) min(255.0, max(0.0, outB));
-	dst[1] = (BYTE) min(255.0, max(0.0, outG));
-	dst[2] = (BYTE) min(255.0, max(0.0, outR));
-	dst[3] = (BYTE) min(255.0, max(0.0, outA * 255.0));
+	dst[0] = (BYTE)min(255.0, max(0.0, outB));
+	dst[1] = (BYTE)min(255.0, max(0.0, outG));
+	dst[2] = (BYTE)min(255.0, max(0.0, outR));
+	dst[3] = (BYTE)min(255.0, max(0.0, outA * 255.0));
 }
-
 
 /** Rebuild composed preview pixels from base icon plus all overlay layers. */
 static void RebuildDerivedComposite()
 {
-	gDerivedEditor.composedPixels.assign((size_t) 256 * 256 * 4, 0);
+	gDerivedEditor.composedPixels.assign((size_t)256 * 256 * 4, 0);
 
 	for (size_t layerIndex = 0; layerIndex < gDerivedEditor.layers.size(); layerIndex++)
 	{
-		const DerivedLayer& layer = gDerivedEditor.layers[layerIndex];
+		const DerivedLayer &layer = gDerivedEditor.layers[layerIndex];
 		if (layer.pixels.empty() || (layer.width == 0) || (layer.height == 0))
 			continue;
 
-		double fit = min(256.0 / (double) layer.width, 256.0 / (double) layer.height);
-		double scale = fit * ((double) layer.scale / 100.0);
-		int drawW = max(1, (int) ((double) layer.width * scale + 0.5));
-		int drawH = max(1, (int) ((double) layer.height * scale + 0.5));
+		double fit = min(256.0 / (double)layer.width, 256.0 / (double)layer.height);
+		double scale = fit * ((double)layer.scale / 100.0);
+		int drawW = max(1, (int)((double)layer.width * scale + 0.5));
+		int drawH = max(1, (int)((double)layer.height * scale + 0.5));
 		int startX = ((256 - drawW) / 2) + layer.posX;
 		int startY = ((256 - drawH) / 2) + layer.posY;
-		double centerX = (double) startX + ((double) drawW * 0.5);
-		double centerY = (double) startY + ((double) drawH * 0.5);
-		double halfW = (double) drawW * 0.5;
-		double halfH = (double) drawH * 0.5;
-		double angleRad = ((double) layer.rotation * 3.14159265358979323846) / 180.0;
+		double centerX = (double)startX + ((double)drawW * 0.5);
+		double centerY = (double)startY + ((double)drawH * 0.5);
+		double halfW = (double)drawW * 0.5;
+		double halfH = (double)drawH * 0.5;
+		double angleRad = ((double)layer.rotation * 3.14159265358979323846) / 180.0;
 		double cosT = cos(angleRad);
 		double sinT = sin(angleRad);
 
@@ -2524,8 +2579,8 @@ static void RebuildDerivedComposite()
 				if ((dstX < 0) || (dstX >= 256))
 					continue;
 
-				double localX = ((double) dstX + 0.5) - centerX;
-				double localY = ((double) dstY + 0.5) - centerY;
+				double localX = ((double)dstX + 0.5) - centerX;
+				double localY = ((double)dstY + 0.5) - centerY;
 				double srcLocalX = (localX * cosT) + (localY * sinT);
 				double srcLocalY = (-localX * sinT) + (localY * cosT);
 				double srcNormX = srcLocalX / halfW;
@@ -2534,12 +2589,12 @@ static void RebuildDerivedComposite()
 				if ((srcNormX < -1.0) || (srcNormX > 1.0) || (srcNormY < -1.0) || (srcNormY > 1.0))
 					continue;
 
-				double srcFx = ((srcNormX + 1.0) * 0.5) * (double) (layer.width - 1);
-				double srcFy = ((srcNormY + 1.0) * 0.5) * (double) (layer.height - 1);
-				UINT srcX = (UINT) min((double) (layer.width - 1), max(0.0, srcFx + 0.5));
-				UINT srcY = (UINT) min((double) (layer.height - 1), max(0.0, srcFy + 0.5));
+				double srcFx = ((srcNormX + 1.0) * 0.5) * (double)(layer.width - 1);
+				double srcFy = ((srcNormY + 1.0) * 0.5) * (double)(layer.height - 1);
+				UINT srcX = (UINT)min((double)(layer.width - 1), max(0.0, srcFx + 0.5));
+				UINT srcY = (UINT)min((double)(layer.height - 1), max(0.0, srcFy + 0.5));
 
-				const BYTE* srcPx = &layer.pixels[((size_t) srcY * layer.width + srcX) * 4];
+				const BYTE *srcPx = &layer.pixels[((size_t)srcY * layer.width + srcX) * 4];
 				BYTE b = srcPx[0];
 				BYTE g = srcPx[1];
 				BYTE r = srcPx[2];
@@ -2550,30 +2605,29 @@ static void RebuildDerivedComposite()
 					ColorizePixelIfGray(b, g, r, layer.hue, layer.saturation);
 
 				if (!layer.isBase)
-					a = (BYTE) (((UINT) a * (UINT) layer.opacity) / 100U);
+					a = (BYTE)(((UINT)a * (UINT)layer.opacity) / 100U);
 
-				BYTE* dstPx = &gDerivedEditor.composedPixels[((size_t) dstY * 256 + dstX) * 4];
+				BYTE *dstPx = &gDerivedEditor.composedPixels[((size_t)dstY * 256 + dstX) * 4];
 				BlendPixelOver(dstPx, b, g, r, a);
 			}
 		}
 	}
 }
 
-
 /** Encode one square BGRA bitmap to a PNG byte buffer through WIC. */
-static HRESULT EncodeSquarePngMain(const std::vector<BYTE>& pixels, UINT canvasSize, std::vector<BYTE>& pngData)
+static HRESULT EncodeSquarePngMain(const std::vector<BYTE> &pixels, UINT canvasSize, std::vector<BYTE> &pngData)
 {
 	HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
 	BOOL shouldUninitialize = SUCCEEDED(hr);
 	if ((hr != S_OK) && (hr != S_FALSE) && (hr != RPC_E_CHANGED_MODE))
 		return hr;
 
-	IWICImagingFactory* factory = NULL;
-	IWICBitmap* bitmap = NULL;
-	IWICBitmapEncoder* encoder = NULL;
-	IWICBitmapFrameEncode* frame = NULL;
-	IPropertyBag2* props = NULL;
-	IStream* stream = NULL;
+	IWICImagingFactory *factory = NULL;
+	IWICBitmap *bitmap = NULL;
+	IWICBitmapEncoder *encoder = NULL;
+	IWICBitmapFrameEncode *frame = NULL;
+	IPropertyBag2 *props = NULL;
+	IStream *stream = NULL;
 
 	do
 	{
@@ -2582,7 +2636,7 @@ static HRESULT EncodeSquarePngMain(const std::vector<BYTE>& pixels, UINT canvasS
 			break;
 
 		UINT stride = canvasSize * 4;
-		hr = factory->CreateBitmapFromMemory(canvasSize, canvasSize, GUID_WICPixelFormat32bppBGRA, stride, (UINT) pixels.size(), const_cast<BYTE*>(pixels.data()), &bitmap);
+		hr = factory->CreateBitmapFromMemory(canvasSize, canvasSize, GUID_WICPixelFormat32bppBGRA, stride, (UINT)pixels.size(), const_cast<BYTE *>(pixels.data()), &bitmap);
 		if (FAILED(hr))
 			break;
 
@@ -2632,14 +2686,14 @@ static HRESULT EncodeSquarePngMain(const std::vector<BYTE>& pixels, UINT canvasS
 		if (FAILED(hr))
 			break;
 
-		pngData.resize((size_t) stat.cbSize.QuadPart);
+		pngData.resize((size_t)stat.cbSize.QuadPart);
 		LARGE_INTEGER zero = {};
 		hr = stream->Seek(zero, STREAM_SEEK_SET, NULL);
 		if (FAILED(hr))
 			break;
 
 		ULONG bytesRead = 0;
-		hr = stream->Read(pngData.data(), (ULONG) pngData.size(), &bytesRead);
+		hr = stream->Read(pngData.data(), (ULONG)pngData.size(), &bytesRead);
 		if (FAILED(hr))
 			break;
 
@@ -2648,8 +2702,7 @@ static HRESULT EncodeSquarePngMain(const std::vector<BYTE>& pixels, UINT canvasS
 			hr = E_FAIL;
 			break;
 		}
-	}
-	while (FALSE);
+	} while (FALSE);
 
 	SafeReleaseCom(props);
 	SafeReleaseCom(frame);
@@ -2664,12 +2717,11 @@ static HRESULT EncodeSquarePngMain(const std::vector<BYTE>& pixels, UINT canvasS
 	return hr;
 }
 
-
 /** Write a multi-size PNG-backed ICO file. */
-static HRESULT WriteMultiSizePngIcoFile(LPCWSTR targetPath, const std::vector<BYTE>& src256)
+static HRESULT WriteMultiSizePngIcoFile(LPCWSTR targetPath, const std::vector<BYTE> &src256)
 {
-	static const UINT kSizes[] = { 16, 24, 32, 48, 64, 128, 256 };
-	std::vector<std::vector<BYTE> > pngPayloads;
+	static const UINT kSizes[] = {16, 24, 32, 48, 64, 128, 256};
+	std::vector<std::vector<BYTE>> pngPayloads;
 	pngPayloads.reserve(_countof(kSizes));
 
 	for (UINT i = 0; i < _countof(kSizes); i++)
@@ -2682,20 +2734,20 @@ static HRESULT WriteMultiSizePngIcoFile(LPCWSTR targetPath, const std::vector<BY
 		pngPayloads.push_back(pngData);
 	}
 
-	DerivedIcoHeader header = { 0, 1, (WORD) _countof(kSizes) };
+	DerivedIcoHeader header = {0, 1, (WORD)_countof(kSizes)};
 	std::vector<DerivedIcoEntry> entries(_countof(kSizes));
-	DWORD dataOffset = (DWORD) (sizeof(DerivedIcoHeader) + (sizeof(DerivedIcoEntry) * _countof(kSizes)));
+	DWORD dataOffset = (DWORD)(sizeof(DerivedIcoHeader) + (sizeof(DerivedIcoEntry) * _countof(kSizes)));
 
 	for (UINT i = 0; i < _countof(kSizes); i++)
 	{
 		DerivedIcoEntry entry = {};
-		entry.bWidth = (kSizes[i] >= 256) ? 0 : (BYTE) kSizes[i];
-		entry.bHeight = (kSizes[i] >= 256) ? 0 : (BYTE) kSizes[i];
+		entry.bWidth = (kSizes[i] >= 256) ? 0 : (BYTE)kSizes[i];
+		entry.bHeight = (kSizes[i] >= 256) ? 0 : (BYTE)kSizes[i];
 		entry.bColorCount = 0;
 		entry.bReserved = 0;
 		entry.wPlanes = 1;
 		entry.wBitCount = 32;
-		entry.dwBytesInRes = (DWORD) pngPayloads[i].size();
+		entry.dwBytesInRes = (DWORD)pngPayloads[i].size();
 		entry.dwImageOffset = dataOffset;
 		entries[i] = entry;
 		dataOffset += entry.dwBytesInRes;
@@ -2718,7 +2770,7 @@ static HRESULT WriteMultiSizePngIcoFile(LPCWSTR targetPath, const std::vector<BY
 
 	for (UINT i = 0; SUCCEEDED(hr) && (i < pngPayloads.size()); i++)
 	{
-		if (!WriteFile(file, pngPayloads[i].data(), (DWORD) pngPayloads[i].size(), &written, NULL) || (written != pngPayloads[i].size()))
+		if (!WriteFile(file, pngPayloads[i].data(), (DWORD)pngPayloads[i].size(), &written, NULL) || (written != pngPayloads[i].size()))
 			hr = HRESULT_FROM_WIN32(GetLastError());
 	}
 
@@ -2729,18 +2781,16 @@ static HRESULT WriteMultiSizePngIcoFile(LPCWSTR targetPath, const std::vector<BY
 	return hr;
 }
 
-
 /** Build one-line text for a layer list entry. */
-static std::wstring BuildLayerListLabel(const DerivedLayer& layer)
+static std::wstring BuildLayerListLabel(const DerivedLayer &layer)
 {
 	WCHAR text[512] = {};
 	if (_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"%s%s  [H:%d S:%d%% O:%d%% C:%s Sc:%d%% X:%d Y:%d R:%d]",
-		layer.displayName.c_str(), layer.isBase ? L" (Fixed)" : L"", layer.hue, layer.saturation, layer.opacity,
-		layer.colorize ? L"On" : L"Off", layer.scale, layer.posX, layer.posY, layer.rotation) < 1)
+					 layer.displayName.c_str(), layer.isBase ? L" (Fixed)" : L"", layer.hue, layer.saturation, layer.opacity,
+					 layer.colorize ? L"On" : L"Off", layer.scale, layer.posX, layer.posY, layer.rotation) < 1)
 		return layer.displayName;
 	return text;
 }
-
 
 /** Write an integer into an edit control. */
 static void SetEditIntValue(HWND hWnd, int controlId, int value)
@@ -2756,7 +2806,6 @@ static void SetEditIntValue(HWND hWnd, int controlId, int value)
 		SetWindowTextW(hEdit, text);
 }
 
-
 /** Parse integer from an edit control, clamped to range. */
 static int GetEditIntValue(HWND hWnd, int controlId, int minValue, int maxValue, int fallback)
 {
@@ -2765,14 +2814,15 @@ static int GetEditIntValue(HWND hWnd, int controlId, int minValue, int maxValue,
 	if (!text[0])
 		return fallback;
 	int value = _wtoi(text);
-	if (value < minValue) value = minValue;
-	if (value > maxValue) value = maxValue;
+	if (value < minValue)
+		value = minValue;
+	if (value > maxValue)
+		value = maxValue;
 	return value;
 }
 
-
 /** Return preview image rect (drawn icon area) in parent client coordinates. */
-static BOOL GetDerivedPreviewImageRect(HWND hWnd, RECT* outRect)
+static BOOL GetDerivedPreviewImageRect(HWND hWnd, RECT *outRect)
 {
 	if (!outRect)
 		return FALSE;
@@ -2783,8 +2833,8 @@ static BOOL GetDerivedPreviewImageRect(HWND hWnd, RECT* outRect)
 	RECT rc = {};
 	if (!GetWindowRect(hPreview, &rc))
 		return FALSE;
-	POINT tl = { rc.left, rc.top };
-	POINT br = { rc.right, rc.bottom };
+	POINT tl = {rc.left, rc.top};
+	POINT br = {rc.right, rc.bottom};
 	ScreenToClient(hWnd, &tl);
 	ScreenToClient(hWnd, &br);
 
@@ -2801,11 +2851,9 @@ static BOOL GetDerivedPreviewImageRect(HWND hWnd, RECT* outRect)
 	return TRUE;
 }
 
-
 static int GetSelectedDerivedLayerIndex(HWND hWnd);
 static void UpdateDerivedSliderLabels(HWND hWnd, int layerIndex);
 static void RefreshDerivedLayerList(HWND hWnd);
-
 
 /** Apply slider + edit values into selected layer and refresh preview/list. */
 static void CommitDerivedLayerValues(HWND hWnd, BOOL fromEdits)
@@ -2814,7 +2862,7 @@ static void CommitDerivedLayerValues(HWND hWnd, BOOL fromEdits)
 	if (idx < 0)
 		return;
 
-	DerivedLayer& layer = gDerivedEditor.layers[idx];
+	DerivedLayer &layer = gDerivedEditor.layers[idx];
 	if (fromEdits)
 	{
 		layer.hue = GetEditIntValue(hWnd, IDC_DERIVED_EDIT_HUE, -180, 180, layer.hue);
@@ -2834,13 +2882,13 @@ static void CommitDerivedLayerValues(HWND hWnd, BOOL fromEdits)
 	}
 	else
 	{
-		layer.hue = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_GETPOS, 0, 0);
-		layer.saturation = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_GETPOS, 0, 0);
-		layer.opacity = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_GETPOS, 0, 0);
-		layer.scale = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_GETPOS, 0, 0);
-		layer.posX = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_GETPOS, 0, 0);
-		layer.posY = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_GETPOS, 0, 0);
-		layer.rotation = (int) SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_ROTATION), TBM_GETPOS, 0, 0);
+		layer.hue = (int)SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_GETPOS, 0, 0);
+		layer.saturation = (int)SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_GETPOS, 0, 0);
+		layer.opacity = (int)SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_GETPOS, 0, 0);
+		layer.scale = (int)SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_GETPOS, 0, 0);
+		layer.posX = (int)SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_GETPOS, 0, 0);
+		layer.posY = (int)SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_GETPOS, 0, 0);
+		layer.rotation = (int)SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_ROTATION), TBM_GETPOS, 0, 0);
 		gDerivedEditor.syncingControls = TRUE;
 		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_HUE, layer.hue);
 		SetEditIntValue(hWnd, IDC_DERIVED_EDIT_SATURATION, layer.saturation);
@@ -2866,7 +2914,6 @@ static void CommitDerivedLayerValues(HWND hWnd, BOOL fromEdits)
 	InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
 }
 
-
 /** Refresh layer listbox from the editor state. */
 static void RefreshDerivedLayerList(HWND hWnd)
 {
@@ -2874,20 +2921,19 @@ static void RefreshDerivedLayerList(HWND hWnd)
 	if (!hList)
 		return;
 
-	int oldSel = (int) SendMessageW(hList, LB_GETCURSEL, 0, 0);
+	int oldSel = (int)SendMessageW(hList, LB_GETCURSEL, 0, 0);
 	SendMessageW(hList, LB_RESETCONTENT, 0, 0);
 
 	for (size_t i = 0; i < gDerivedEditor.layers.size(); i++)
-		SendMessageW(hList, LB_ADDSTRING, 0, (LPARAM) BuildLayerListLabel(gDerivedEditor.layers[i]).c_str());
+		SendMessageW(hList, LB_ADDSTRING, 0, (LPARAM)BuildLayerListLabel(gDerivedEditor.layers[i]).c_str());
 
 	if (!gDerivedEditor.layers.empty())
 	{
-		if ((oldSel < 0) || (oldSel >= (int) gDerivedEditor.layers.size()))
-			oldSel = (int) gDerivedEditor.layers.size() - 1;
-		SendMessageW(hList, LB_SETCURSEL, (WPARAM) oldSel, 0);
+		if ((oldSel < 0) || (oldSel >= (int)gDerivedEditor.layers.size()))
+			oldSel = (int)gDerivedEditor.layers.size() - 1;
+		SendMessageW(hList, LB_SETCURSEL, (WPARAM)oldSel, 0);
 	}
 }
-
 
 /** Return currently selected layer index or -1 when no layer is selected. */
 static int GetSelectedDerivedLayerIndex(HWND hWnd)
@@ -2895,20 +2941,19 @@ static int GetSelectedDerivedLayerIndex(HWND hWnd)
 	HWND hList = GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST);
 	if (!hList)
 		return -1;
-	int idx = (int) SendMessageW(hList, LB_GETCURSEL, 0, 0);
-	if ((idx < 0) || (idx >= (int) gDerivedEditor.layers.size()))
+	int idx = (int)SendMessageW(hList, LB_GETCURSEL, 0, 0);
+	if ((idx < 0) || (idx >= (int)gDerivedEditor.layers.size()))
 		return -1;
 	return idx;
 }
 
-
 /** Update text labels attached to editor sliders. */
 static void UpdateDerivedSliderLabels(HWND hWnd, int layerIndex)
 {
-	if ((layerIndex < 0) || (layerIndex >= (int) gDerivedEditor.layers.size()))
+	if ((layerIndex < 0) || (layerIndex >= (int)gDerivedEditor.layers.size()))
 		return;
 
-	const DerivedLayer& layer = gDerivedEditor.layers[layerIndex];
+	const DerivedLayer &layer = gDerivedEditor.layers[layerIndex];
 	WCHAR text[96] = {};
 
 	_snwprintf_s(text, _countof(text), (_countof(text) - 1), L"Hue: %d", layer.hue);
@@ -2943,19 +2988,18 @@ static void UpdateDerivedSliderLabels(HWND hWnd, int layerIndex)
 	gDerivedEditor.syncingControls = FALSE;
 }
 
-
 /** Push selected layer values into slider controls. */
 static void SyncDerivedControlsFromSelection(HWND hWnd)
 {
 	int idx = GetSelectedDerivedLayerIndex(hWnd);
 	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_REMOVE_LAYER), (idx >= 0));
 	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_MOVE_UP), (idx > 1));
-	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_MOVE_DOWN), (idx > 0) && (idx < ((int) gDerivedEditor.layers.size() - 1)));
+	EnableWindow(GetDlgItem(hWnd, IDC_DERIVED_MOVE_DOWN), (idx > 0) && (idx < ((int)gDerivedEditor.layers.size() - 1)));
 
 	if (idx < 0)
 		return;
 
-	const DerivedLayer& layer = gDerivedEditor.layers[idx];
+	const DerivedLayer &layer = gDerivedEditor.layers[idx];
 	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_SETPOS, TRUE, layer.hue);
 	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_SETPOS, TRUE, layer.saturation);
 	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_SETPOS, TRUE, layer.opacity);
@@ -2972,13 +3016,11 @@ static void SyncDerivedControlsFromSelection(HWND hWnd)
 	UpdateDerivedSliderLabels(hWnd, idx);
 }
 
-
 /** Read current slider values and write them back into selected layer. */
 static void ApplyDerivedControlsToSelection(HWND hWnd)
 {
 	CommitDerivedLayerValues(hWnd, FALSE);
 }
-
 
 /** Ask user to choose one PNG/ICO layer file and append it to the editor. */
 static void AddDerivedLayerFromFile(HWND hWnd)
@@ -3028,12 +3070,11 @@ static void AddDerivedLayerFromFile(HWND hWnd)
 
 	gDerivedEditor.layers.push_back(layer);
 	RefreshDerivedLayerList(hWnd);
-	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST), LB_SETCURSEL, (WPARAM) (gDerivedEditor.layers.size() - 1), 0);
+	SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST), LB_SETCURSEL, (WPARAM)(gDerivedEditor.layers.size() - 1), 0);
 	SyncDerivedControlsFromSelection(hWnd);
 	RebuildDerivedComposite();
 	InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
 }
-
 
 /** Save composed icon into icons\\Derived Icons with required name and unique suffix on conflict. */
 static BOOL SaveDerivedIconFromEditor(HWND hWnd)
@@ -3078,399 +3119,398 @@ static BOOL SaveDerivedIconFromEditor(HWND hWnd)
 	return TRUE;
 }
 
-
 /** Derived icon editor window procedure. */
 static LRESULT CALLBACK DerivedIconEditorWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
 	switch (msg)
 	{
-		case WM_CREATE:
+	case WM_CREATE:
+	{
+		gRuntimeThemeUsers++;
+		INITCOMMONCONTROLSEX icc = {};
+		icc.dwSize = sizeof(icc);
+		icc.dwICC = ICC_BAR_CLASSES;
+		InitCommonControlsEx(&icc);
+
+		CreateWindowW(L"STATIC", L"Composed Preview", WS_CHILD | WS_VISIBLE,
+					  12, 12, 220, 20, hWnd, NULL, NULL, NULL);
+		HWND hPreview = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW | SS_NOTIFY | WS_BORDER,
+									  12, 36, 220, 220, hWnd, (HMENU)IDC_DERIVED_PREVIEW, NULL, NULL);
+		if (hPreview)
+			SetWindowSubclass(hPreview, DerivedPreviewSubclassProc, 1, 0);
+
+		CreateWindowW(L"STATIC", L"Layers", WS_CHILD | WS_VISIBLE,
+					  248, 12, 220, 20, hWnd, NULL, NULL, NULL);
+		CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL,
+					  248, 36, 440, 220, hWnd, (HMENU)IDC_DERIVED_LAYER_LIST, NULL, NULL);
+
+		CreateWindowW(L"BUTTON", L"Add Layer", WS_CHILD | WS_VISIBLE,
+					  700, 36, 120, 28, hWnd, (HMENU)IDC_DERIVED_ADD_LAYER, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Remove", WS_CHILD | WS_VISIBLE,
+					  700, 70, 120, 28, hWnd, (HMENU)IDC_DERIVED_REMOVE_LAYER, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Move Up", WS_CHILD | WS_VISIBLE,
+					  700, 104, 120, 28, hWnd, (HMENU)IDC_DERIVED_MOVE_UP, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Move Down", WS_CHILD | WS_VISIBLE,
+					  700, 138, 120, 28, hWnd, (HMENU)IDC_DERIVED_MOVE_DOWN, NULL, NULL);
+
+		CreateWindowW(L"STATIC", L"Hue: 0", WS_CHILD | WS_VISIBLE,
+					  248, 272, 220, 20, hWnd, (HMENU)IDC_DERIVED_LABEL_HUE, NULL, NULL);
+		CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+					  500, 300, 50, 20, hWnd, (HMENU)IDC_DERIVED_EDIT_HUE, NULL, NULL);
+		CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+					  248, 292, 246, 34, hWnd, (HMENU)IDC_DERIVED_HUE, NULL, NULL);
+
+		CreateWindowW(L"STATIC", L"Saturation: 100%", WS_CHILD | WS_VISIBLE,
+					  248, 328, 220, 20, hWnd, (HMENU)IDC_DERIVED_LABEL_SATURATION, NULL, NULL);
+		CreateWindowW(L"EDIT", L"100", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+					  500, 356, 50, 20, hWnd, (HMENU)IDC_DERIVED_EDIT_SATURATION, NULL, NULL);
+		CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+					  248, 348, 246, 34, hWnd, (HMENU)IDC_DERIVED_SATURATION, NULL, NULL);
+
+		CreateWindowW(L"STATIC", L"Opacity: 100%", WS_CHILD | WS_VISIBLE,
+					  248, 384, 220, 20, hWnd, (HMENU)IDC_DERIVED_LABEL_OPACITY, NULL, NULL);
+		CreateWindowW(L"EDIT", L"100", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+					  500, 412, 50, 20, hWnd, (HMENU)IDC_DERIVED_EDIT_OPACITY, NULL, NULL);
+		CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+					  248, 404, 246, 34, hWnd, (HMENU)IDC_DERIVED_OPACITY, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Colorize grayscale", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+					  248, 442, 180, 20, hWnd, (HMENU)IDC_DERIVED_COLORIZE, NULL, NULL);
+
+		CreateWindowW(L"STATIC", L"Scale: 100%", WS_CHILD | WS_VISIBLE,
+					  560, 272, 220, 20, hWnd, (HMENU)IDC_DERIVED_LABEL_SCALE, NULL, NULL);
+		CreateWindowW(L"EDIT", L"100", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+					  770, 300, 50, 20, hWnd, (HMENU)IDC_DERIVED_EDIT_SCALE, NULL, NULL);
+		CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+					  560, 292, 204, 34, hWnd, (HMENU)IDC_DERIVED_SCALE, NULL, NULL);
+
+		CreateWindowW(L"STATIC", L"Position X: 0", WS_CHILD | WS_VISIBLE,
+					  560, 328, 220, 20, hWnd, (HMENU)IDC_DERIVED_LABEL_POSX, NULL, NULL);
+		CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+					  770, 356, 50, 20, hWnd, (HMENU)IDC_DERIVED_EDIT_POSX, NULL, NULL);
+		CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+					  560, 348, 204, 34, hWnd, (HMENU)IDC_DERIVED_POSX, NULL, NULL);
+
+		CreateWindowW(L"STATIC", L"Position Y: 0", WS_CHILD | WS_VISIBLE,
+					  560, 384, 220, 20, hWnd, (HMENU)IDC_DERIVED_LABEL_POSY, NULL, NULL);
+		CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+					  770, 412, 50, 20, hWnd, (HMENU)IDC_DERIVED_EDIT_POSY, NULL, NULL);
+		CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+					  560, 404, 204, 34, hWnd, (HMENU)IDC_DERIVED_POSY, NULL, NULL);
+
+		CreateWindowW(L"STATIC", L"Rotation: 0\xB0", WS_CHILD | WS_VISIBLE,
+					  560, 440, 220, 20, hWnd, (HMENU)IDC_DERIVED_LABEL_ROTATION, NULL, NULL);
+		CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+					  770, 468, 50, 20, hWnd, (HMENU)IDC_DERIVED_EDIT_ROTATION, NULL, NULL);
+		CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
+					  560, 460, 204, 34, hWnd, (HMENU)IDC_DERIVED_ROTATION, NULL, NULL);
+
+		CreateWindowW(L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+					  640, 504, 90, 30, hWnd, (HMENU)IDC_DERIVED_SAVE, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
+					  736, 504, 90, 30, hWnd, (HMENU)IDC_DERIVED_CANCEL, NULL, NULL);
+
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_SETRANGE, TRUE, MAKELONG(-180, 180));
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_SETRANGE, TRUE, MAKELONG(0, 200));
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_SETRANGE, TRUE, MAKELONG(0, 100));
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETRANGE, TRUE, MAKELONG(10, 300));
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_SETRANGE, TRUE, MAKELONG(-128, 128));
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_SETRANGE, TRUE, MAKELONG(-128, 128));
+		SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_ROTATION), TBM_SETRANGE, TRUE, MAKELONG(0, 360));
+
+		RefreshDerivedLayerList(hWnd);
+		SyncDerivedControlsFromSelection(hWnd);
+		RebuildDerivedComposite();
+		ApplyRuntimeTheme(hWnd);
+	}
+		return 0;
+
+	case WM_THEMECHANGED:
+	case WM_SYSCOLORCHANGE:
+	case WM_SETTINGCHANGE:
+		ApplyRuntimeTheme(hWnd);
+		return 0;
+
+	case WM_ERASEBKGND:
+	{
+		RECT rc = {};
+		GetClientRect(hWnd, &rc);
+		FillRect((HDC)wParam, &rc, gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+		return 1;
+	}
+
+	case WM_CTLCOLORSTATIC:
+	{
+		HDC hdc = (HDC)wParam;
+		SetTextColor(hdc, gRuntimeTextColor);
+		SetBkColor(hdc, gRuntimeBackgroundColor);
+		return (LRESULT)(gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+	}
+
+	case WM_CTLCOLOREDIT:
+	case WM_CTLCOLORLISTBOX:
+	{
+		HDC hdc = (HDC)wParam;
+		SetTextColor(hdc, gRuntimeTextColor);
+		SetBkColor(hdc, gRuntimePanelColor);
+		return (LRESULT)(gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
+	}
+
+	case WM_DRAWITEM:
+	{
+		LPDRAWITEMSTRUCT di = (LPDRAWITEMSTRUCT)lParam;
+		if (!di || (di->CtlID != IDC_DERIVED_PREVIEW))
+			break;
+
+		FillRect(di->hDC, &di->rcItem, gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
+		if (gDerivedEditor.composedPixels.size() == ((size_t)256 * 256 * 4))
 		{
-			gRuntimeThemeUsers++;
-			INITCOMMONCONTROLSEX icc = {};
-			icc.dwSize = sizeof(icc);
-			icc.dwICC = ICC_BAR_CLASSES;
-			InitCommonControlsEx(&icc);
+			BITMAPINFO bmi = {};
+			bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+			bmi.bmiHeader.biWidth = 256;
+			bmi.bmiHeader.biHeight = -256;
+			bmi.bmiHeader.biPlanes = 1;
+			bmi.bmiHeader.biBitCount = 32;
+			bmi.bmiHeader.biCompression = BI_RGB;
 
-			CreateWindowW(L"STATIC", L"Composed Preview", WS_CHILD | WS_VISIBLE,
-				12, 12, 220, 20, hWnd, NULL, NULL, NULL);
-			HWND hPreview = CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW | SS_NOTIFY | WS_BORDER,
-				12, 36, 220, 220, hWnd, (HMENU) IDC_DERIVED_PREVIEW, NULL, NULL);
-			if (hPreview)
-				SetWindowSubclass(hPreview, DerivedPreviewSubclassProc, 1, 0);
+			int boxW = di->rcItem.right - di->rcItem.left;
+			int boxH = di->rcItem.bottom - di->rcItem.top;
+			int draw = min(boxW, boxH) - 8;
+			if (draw < 1)
+				draw = 1;
+			int dx = di->rcItem.left + (boxW - draw) / 2;
+			int dy = di->rcItem.top + (boxH - draw) / 2;
 
-			CreateWindowW(L"STATIC", L"Layers", WS_CHILD | WS_VISIBLE,
-				248, 12, 220, 20, hWnd, NULL, NULL, NULL);
-			CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | LBS_NOTIFY | WS_VSCROLL,
-				248, 36, 440, 220, hWnd, (HMENU) IDC_DERIVED_LAYER_LIST, NULL, NULL);
+			StretchDIBits(di->hDC,
+						  dx,
+						  dy,
+						  draw,
+						  draw,
+						  0,
+						  0,
+						  256,
+						  256,
+						  gDerivedEditor.composedPixels.data(),
+						  &bmi,
+						  DIB_RGB_COLORS,
+						  SRCCOPY);
+		}
+		return TRUE;
+	}
 
-			CreateWindowW(L"BUTTON", L"Add Layer", WS_CHILD | WS_VISIBLE,
-				700, 36, 120, 28, hWnd, (HMENU) IDC_DERIVED_ADD_LAYER, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Remove", WS_CHILD | WS_VISIBLE,
-				700, 70, 120, 28, hWnd, (HMENU) IDC_DERIVED_REMOVE_LAYER, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Move Up", WS_CHILD | WS_VISIBLE,
-				700, 104, 120, 28, hWnd, (HMENU) IDC_DERIVED_MOVE_UP, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Move Down", WS_CHILD | WS_VISIBLE,
-				700, 138, 120, 28, hWnd, (HMENU) IDC_DERIVED_MOVE_DOWN, NULL, NULL);
+	case WM_HSCROLL:
+		ApplyDerivedControlsToSelection(hWnd);
+		return 0;
 
-			CreateWindowW(L"STATIC", L"Hue: 0", WS_CHILD | WS_VISIBLE,
-				248, 272, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_HUE, NULL, NULL);
-			CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				500, 300, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_HUE, NULL, NULL);
-			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				248, 292, 246, 34, hWnd, (HMENU) IDC_DERIVED_HUE, NULL, NULL);
+	case WM_MOUSEWHEEL:
+	{
+		RECT imageRect = {};
+		if (!GetDerivedPreviewImageRect(hWnd, &imageRect))
+			break;
+		POINT pt = {(short)LOWORD(lParam), (short)HIWORD(lParam)};
+		ScreenToClient(hWnd, &pt);
+		if (!PtInRect(&imageRect, pt))
+			break;
 
-			CreateWindowW(L"STATIC", L"Saturation: 100%", WS_CHILD | WS_VISIBLE,
-				248, 328, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_SATURATION, NULL, NULL);
-			CreateWindowW(L"EDIT", L"100", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				500, 356, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_SATURATION, NULL, NULL);
-			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				248, 348, 246, 34, hWnd, (HMENU) IDC_DERIVED_SATURATION, NULL, NULL);
+		int idx = GetSelectedDerivedLayerIndex(hWnd);
+		if (idx < 0)
+			break;
 
-			CreateWindowW(L"STATIC", L"Opacity: 100%", WS_CHILD | WS_VISIBLE,
-				248, 384, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_OPACITY, NULL, NULL);
-			CreateWindowW(L"EDIT", L"100", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				500, 412, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_OPACITY, NULL, NULL);
-			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				248, 404, 246, 34, hWnd, (HMENU) IDC_DERIVED_OPACITY, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Colorize grayscale", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
-				248, 442, 180, 20, hWnd, (HMENU) IDC_DERIVED_COLORIZE, NULL, NULL);
+		int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+		int step = (delta > 0) ? 5 : -5;
+		BOOL ctrlDown = ((GetKeyState(VK_CONTROL) & 0x8000) != 0);
+		BOOL shiftDown = ((GetKeyState(VK_SHIFT) & 0x8000) != 0);
 
-			CreateWindowW(L"STATIC", L"Scale: 100%", WS_CHILD | WS_VISIBLE,
-				560, 272, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_SCALE, NULL, NULL);
-			CreateWindowW(L"EDIT", L"100", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				770, 300, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_SCALE, NULL, NULL);
-			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				560, 292, 204, 34, hWnd, (HMENU) IDC_DERIVED_SCALE, NULL, NULL);
+		if (ctrlDown && !shiftDown)
+		{
+			if (!gDerivedEditor.layers[idx].isBase)
+			{
+				gDerivedEditor.layers[idx].opacity = min(100, max(0, gDerivedEditor.layers[idx].opacity + step));
+				SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].opacity);
+			}
+		}
+		else if (ctrlDown && shiftDown)
+		{
+			if (!gDerivedEditor.layers[idx].isBase)
+			{
+				int newHue = gDerivedEditor.layers[idx].hue + step;
+				int newSat = gDerivedEditor.layers[idx].saturation + step;
+				gDerivedEditor.layers[idx].hue = min(180, max(-180, newHue));
+				gDerivedEditor.layers[idx].saturation = min(200, max(0, newSat));
+				SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].hue);
+				SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].saturation);
+			}
+		}
+		else if (!ctrlDown && shiftDown)
+		{
+			if (!gDerivedEditor.layers[idx].isBase)
+			{
+				int rotation = gDerivedEditor.layers[idx].rotation + step;
+				while (rotation < 0)
+					rotation += 360;
+				while (rotation > 360)
+					rotation -= 360;
+				gDerivedEditor.layers[idx].rotation = rotation;
+				SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_ROTATION), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].rotation);
+			}
+		}
+		else
+		{
+			gDerivedEditor.layers[idx].scale = min(300, max(10, gDerivedEditor.layers[idx].scale + step));
+			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].scale);
+		}
 
-			CreateWindowW(L"STATIC", L"Position X: 0", WS_CHILD | WS_VISIBLE,
-				560, 328, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_POSX, NULL, NULL);
-			CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				770, 356, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_POSX, NULL, NULL);
-			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				560, 348, 204, 34, hWnd, (HMENU) IDC_DERIVED_POSX, NULL, NULL);
+		CommitDerivedLayerValues(hWnd, FALSE);
+		return 0;
+	}
 
-			CreateWindowW(L"STATIC", L"Position Y: 0", WS_CHILD | WS_VISIBLE,
-				560, 384, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_POSY, NULL, NULL);
-			CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				770, 412, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_POSY, NULL, NULL);
-			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				560, 404, 204, 34, hWnd, (HMENU) IDC_DERIVED_POSY, NULL, NULL);
+	case WM_LBUTTONDOWN:
+	{
+		RECT imageRect = {};
+		if (!GetDerivedPreviewImageRect(hWnd, &imageRect))
+			break;
+		POINT pt = {(short)LOWORD(lParam), (short)HIWORD(lParam)};
+		if (!PtInRect(&imageRect, pt))
+			break;
+		int idx = GetSelectedDerivedLayerIndex(hWnd);
+		if (idx < 0)
+			break;
 
-			CreateWindowW(L"STATIC", L"Rotation: 0\xB0", WS_CHILD | WS_VISIBLE,
-				560, 440, 220, 20, hWnd, (HMENU) IDC_DERIVED_LABEL_ROTATION, NULL, NULL);
-			CreateWindowW(L"EDIT", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
-				770, 468, 50, 20, hWnd, (HMENU) IDC_DERIVED_EDIT_ROTATION, NULL, NULL);
-			CreateWindowW(TRACKBAR_CLASSW, L"", WS_CHILD | WS_VISIBLE | TBS_AUTOTICKS,
-				560, 460, 204, 34, hWnd, (HMENU) IDC_DERIVED_ROTATION, NULL, NULL);
+		gDerivedEditor.draggingLayer = TRUE;
+		gDerivedEditor.dragStartPoint = pt;
+		gDerivedEditor.dragStartPosX = gDerivedEditor.layers[idx].posX;
+		gDerivedEditor.dragStartPosY = gDerivedEditor.layers[idx].posY;
+		SetCapture(hWnd);
+		return 0;
+	}
 
-			CreateWindowW(L"BUTTON", L"Save", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-				640, 504, 90, 30, hWnd, (HMENU) IDC_DERIVED_SAVE, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
-				736, 504, 90, 30, hWnd, (HMENU) IDC_DERIVED_CANCEL, NULL, NULL);
+	case WM_MOUSEMOVE:
+		if (gDerivedEditor.draggingLayer)
+		{
+			int idx = GetSelectedDerivedLayerIndex(hWnd);
+			if (idx >= 0)
+			{
+				POINT pt = {(short)LOWORD(lParam), (short)HIWORD(lParam)};
+				int dx = pt.x - gDerivedEditor.dragStartPoint.x;
+				int dy = pt.y - gDerivedEditor.dragStartPoint.y;
+				gDerivedEditor.layers[idx].posX = min(128, max(-128, gDerivedEditor.dragStartPosX + dx));
+				gDerivedEditor.layers[idx].posY = min(128, max(-128, gDerivedEditor.dragStartPosY + dy));
+				SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].posX);
+				SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].posY);
+				CommitDerivedLayerValues(hWnd, FALSE);
+			}
+			return 0;
+		}
+		break;
 
-			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_SETRANGE, TRUE, MAKELONG(-180, 180));
-			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_SETRANGE, TRUE, MAKELONG(0, 200));
-			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_SETRANGE, TRUE, MAKELONG(0, 100));
-			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETRANGE, TRUE, MAKELONG(10, 300));
-			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_SETRANGE, TRUE, MAKELONG(-128, 128));
-			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_SETRANGE, TRUE, MAKELONG(-128, 128));
-			SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_ROTATION), TBM_SETRANGE, TRUE, MAKELONG(0, 360));
+	case WM_LBUTTONUP:
+		if (gDerivedEditor.draggingLayer)
+		{
+			gDerivedEditor.draggingLayer = FALSE;
+			ReleaseCapture();
+			return 0;
+		}
+		break;
 
-			RefreshDerivedLayerList(hWnd);
-			SyncDerivedControlsFromSelection(hWnd);
-			RebuildDerivedComposite();
-			ApplyRuntimeTheme(hWnd);
+	case WM_COMMAND:
+		switch (LOWORD(wParam))
+		{
+		case IDC_DERIVED_LAYER_LIST:
+			if (HIWORD(wParam) == LBN_SELCHANGE)
+				SyncDerivedControlsFromSelection(hWnd);
+			break;
+
+		case IDC_DERIVED_EDIT_HUE:
+		case IDC_DERIVED_EDIT_SATURATION:
+		case IDC_DERIVED_EDIT_OPACITY:
+		case IDC_DERIVED_EDIT_SCALE:
+		case IDC_DERIVED_EDIT_POSX:
+		case IDC_DERIVED_EDIT_POSY:
+		case IDC_DERIVED_EDIT_ROTATION:
+			if ((HIWORD(wParam) == EN_CHANGE) && !gDerivedEditor.syncingControls)
+				CommitDerivedLayerValues(hWnd, TRUE);
+			break;
+
+		case IDC_DERIVED_COLORIZE:
+			if (HIWORD(wParam) == BN_CLICKED)
+				CommitDerivedLayerValues(hWnd, FALSE);
+			break;
+
+		case IDC_DERIVED_ADD_LAYER:
+			AddDerivedLayerFromFile(hWnd);
+			break;
+
+		case IDC_DERIVED_REMOVE_LAYER:
+		{
+			int idx = GetSelectedDerivedLayerIndex(hWnd);
+			if (idx > 0)
+			{
+				gDerivedEditor.layers.erase(gDerivedEditor.layers.begin() + idx);
+				RefreshDerivedLayerList(hWnd);
+				SyncDerivedControlsFromSelection(hWnd);
+				RebuildDerivedComposite();
+				InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
+			}
+		}
+		break;
+
+		case IDC_DERIVED_MOVE_UP:
+		{
+			int idx = GetSelectedDerivedLayerIndex(hWnd);
+			if (idx > 1)
+			{
+				std::swap(gDerivedEditor.layers[idx], gDerivedEditor.layers[idx - 1]);
+				RefreshDerivedLayerList(hWnd);
+				SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST), LB_SETCURSEL, idx - 1, 0);
+				SyncDerivedControlsFromSelection(hWnd);
+				RebuildDerivedComposite();
+				InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
+			}
+		}
+		break;
+
+		case IDC_DERIVED_MOVE_DOWN:
+		{
+			int idx = GetSelectedDerivedLayerIndex(hWnd);
+			if ((idx > 0) && (idx < ((int)gDerivedEditor.layers.size() - 1)))
+			{
+				std::swap(gDerivedEditor.layers[idx], gDerivedEditor.layers[idx + 1]);
+				RefreshDerivedLayerList(hWnd);
+				SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST), LB_SETCURSEL, idx + 1, 0);
+				SyncDerivedControlsFromSelection(hWnd);
+				RebuildDerivedComposite();
+				InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
+			}
+		}
+		break;
+
+		case IDC_DERIVED_SAVE:
+			if (SaveDerivedIconFromEditor(hWnd))
+				DestroyWindow(hWnd);
+			break;
+
+		case IDC_DERIVED_CANCEL:
+			DestroyWindow(hWnd);
+			break;
 		}
 		return 0;
 
-		case WM_THEMECHANGED:
-		case WM_SYSCOLORCHANGE:
-		case WM_SETTINGCHANGE:
-			ApplyRuntimeTheme(hWnd);
-			return 0;
+	case WM_CLOSE:
+		DestroyWindow(hWnd);
+		return 0;
 
-		case WM_ERASEBKGND:
-		{
-			RECT rc = {};
-			GetClientRect(hWnd, &rc);
-			FillRect((HDC) wParam, &rc, gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
-			return 1;
-		}
-
-		case WM_CTLCOLORSTATIC:
-		{
-			HDC hdc = (HDC) wParam;
-			SetTextColor(hdc, gRuntimeTextColor);
-			SetBkColor(hdc, gRuntimeBackgroundColor);
-			return (LRESULT) (gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
-		}
-
-		case WM_CTLCOLOREDIT:
-		case WM_CTLCOLORLISTBOX:
-		{
-			HDC hdc = (HDC) wParam;
-			SetTextColor(hdc, gRuntimeTextColor);
-			SetBkColor(hdc, gRuntimePanelColor);
-			return (LRESULT) (gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
-		}
-
-		case WM_DRAWITEM:
-		{
-			LPDRAWITEMSTRUCT di = (LPDRAWITEMSTRUCT) lParam;
-			if (!di || (di->CtlID != IDC_DERIVED_PREVIEW))
-				break;
-
-			FillRect(di->hDC, &di->rcItem, gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
-			if (gDerivedEditor.composedPixels.size() == ((size_t) 256 * 256 * 4))
-			{
-				BITMAPINFO bmi = {};
-				bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-				bmi.bmiHeader.biWidth = 256;
-				bmi.bmiHeader.biHeight = -256;
-				bmi.bmiHeader.biPlanes = 1;
-				bmi.bmiHeader.biBitCount = 32;
-				bmi.bmiHeader.biCompression = BI_RGB;
-
-				int boxW = di->rcItem.right - di->rcItem.left;
-				int boxH = di->rcItem.bottom - di->rcItem.top;
-				int draw = min(boxW, boxH) - 8;
-				if (draw < 1) draw = 1;
-				int dx = di->rcItem.left + (boxW - draw) / 2;
-				int dy = di->rcItem.top + (boxH - draw) / 2;
-
-				StretchDIBits(di->hDC,
-					dx,
-					dy,
-					draw,
-					draw,
-					0,
-					0,
-					256,
-					256,
-					gDerivedEditor.composedPixels.data(),
-					&bmi,
-					DIB_RGB_COLORS,
-					SRCCOPY);
-			}
-			return TRUE;
-		}
-
-		case WM_HSCROLL:
-			ApplyDerivedControlsToSelection(hWnd);
-			return 0;
-
-		case WM_MOUSEWHEEL:
-		{
-			RECT imageRect = {};
-			if (!GetDerivedPreviewImageRect(hWnd, &imageRect))
-				break;
-			POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
-			ScreenToClient(hWnd, &pt);
-			if (!PtInRect(&imageRect, pt))
-				break;
-
-			int idx = GetSelectedDerivedLayerIndex(hWnd);
-			if (idx < 0)
-				break;
-
-			int delta = GET_WHEEL_DELTA_WPARAM(wParam);
-			int step = (delta > 0) ? 5 : -5;
-			BOOL ctrlDown = ((GetKeyState(VK_CONTROL) & 0x8000) != 0);
-			BOOL shiftDown = ((GetKeyState(VK_SHIFT) & 0x8000) != 0);
-
-			if (ctrlDown && !shiftDown)
-			{
-				if (!gDerivedEditor.layers[idx].isBase)
-				{
-					gDerivedEditor.layers[idx].opacity = min(100, max(0, gDerivedEditor.layers[idx].opacity + step));
-					SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_OPACITY), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].opacity);
-				}
-			}
-			else if (ctrlDown && shiftDown)
-			{
-				if (!gDerivedEditor.layers[idx].isBase)
-				{
-					int newHue = gDerivedEditor.layers[idx].hue + step;
-					int newSat = gDerivedEditor.layers[idx].saturation + step;
-					gDerivedEditor.layers[idx].hue = min(180, max(-180, newHue));
-					gDerivedEditor.layers[idx].saturation = min(200, max(0, newSat));
-					SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_HUE), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].hue);
-					SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SATURATION), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].saturation);
-				}
-			}
-			else if (!ctrlDown && shiftDown)
-			{
-				if (!gDerivedEditor.layers[idx].isBase)
-				{
-					int rotation = gDerivedEditor.layers[idx].rotation + step;
-					while (rotation < 0)
-						rotation += 360;
-					while (rotation > 360)
-						rotation -= 360;
-					gDerivedEditor.layers[idx].rotation = rotation;
-					SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_ROTATION), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].rotation);
-				}
-			}
-			else
-			{
-				gDerivedEditor.layers[idx].scale = min(300, max(10, gDerivedEditor.layers[idx].scale + step));
-				SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_SCALE), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].scale);
-			}
-
-			CommitDerivedLayerValues(hWnd, FALSE);
-			return 0;
-		}
-
-		case WM_LBUTTONDOWN:
-		{
-			RECT imageRect = {};
-			if (!GetDerivedPreviewImageRect(hWnd, &imageRect))
-				break;
-			POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
-			if (!PtInRect(&imageRect, pt))
-				break;
-			int idx = GetSelectedDerivedLayerIndex(hWnd);
-			if (idx < 0)
-				break;
-
-			gDerivedEditor.draggingLayer = TRUE;
-			gDerivedEditor.dragStartPoint = pt;
-			gDerivedEditor.dragStartPosX = gDerivedEditor.layers[idx].posX;
-			gDerivedEditor.dragStartPosY = gDerivedEditor.layers[idx].posY;
-			SetCapture(hWnd);
-			return 0;
-		}
-
-		case WM_MOUSEMOVE:
-			if (gDerivedEditor.draggingLayer)
-			{
-				int idx = GetSelectedDerivedLayerIndex(hWnd);
-				if (idx >= 0)
-				{
-					POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
-					int dx = pt.x - gDerivedEditor.dragStartPoint.x;
-					int dy = pt.y - gDerivedEditor.dragStartPoint.y;
-					gDerivedEditor.layers[idx].posX = min(128, max(-128, gDerivedEditor.dragStartPosX + dx));
-					gDerivedEditor.layers[idx].posY = min(128, max(-128, gDerivedEditor.dragStartPosY + dy));
-					SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSX), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].posX);
-					SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_POSY), TBM_SETPOS, TRUE, gDerivedEditor.layers[idx].posY);
-					CommitDerivedLayerValues(hWnd, FALSE);
-				}
-				return 0;
-			}
-			break;
-
-		case WM_LBUTTONUP:
-			if (gDerivedEditor.draggingLayer)
-			{
-				gDerivedEditor.draggingLayer = FALSE;
-				ReleaseCapture();
-				return 0;
-			}
-			break;
-
-		case WM_COMMAND:
-			switch (LOWORD(wParam))
-			{
-				case IDC_DERIVED_LAYER_LIST:
-				if (HIWORD(wParam) == LBN_SELCHANGE)
-					SyncDerivedControlsFromSelection(hWnd);
-				break;
-
-				case IDC_DERIVED_EDIT_HUE:
-				case IDC_DERIVED_EDIT_SATURATION:
-				case IDC_DERIVED_EDIT_OPACITY:
-				case IDC_DERIVED_EDIT_SCALE:
-				case IDC_DERIVED_EDIT_POSX:
-				case IDC_DERIVED_EDIT_POSY:
-				case IDC_DERIVED_EDIT_ROTATION:
-					if ((HIWORD(wParam) == EN_CHANGE) && !gDerivedEditor.syncingControls)
-						CommitDerivedLayerValues(hWnd, TRUE);
-					break;
-
-				case IDC_DERIVED_COLORIZE:
-					if (HIWORD(wParam) == BN_CLICKED)
-						CommitDerivedLayerValues(hWnd, FALSE);
-					break;
-
-				case IDC_DERIVED_ADD_LAYER:
-					AddDerivedLayerFromFile(hWnd);
-					break;
-
-				case IDC_DERIVED_REMOVE_LAYER:
-				{
-					int idx = GetSelectedDerivedLayerIndex(hWnd);
-					if (idx > 0)
-					{
-						gDerivedEditor.layers.erase(gDerivedEditor.layers.begin() + idx);
-						RefreshDerivedLayerList(hWnd);
-						SyncDerivedControlsFromSelection(hWnd);
-						RebuildDerivedComposite();
-						InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
-					}
-				}
-				break;
-
-				case IDC_DERIVED_MOVE_UP:
-				{
-					int idx = GetSelectedDerivedLayerIndex(hWnd);
-					if (idx > 1)
-					{
-						std::swap(gDerivedEditor.layers[idx], gDerivedEditor.layers[idx - 1]);
-						RefreshDerivedLayerList(hWnd);
-						SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST), LB_SETCURSEL, idx - 1, 0);
-						SyncDerivedControlsFromSelection(hWnd);
-						RebuildDerivedComposite();
-						InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
-					}
-				}
-				break;
-
-				case IDC_DERIVED_MOVE_DOWN:
-				{
-					int idx = GetSelectedDerivedLayerIndex(hWnd);
-					if ((idx > 0) && (idx < ((int) gDerivedEditor.layers.size() - 1)))
-					{
-						std::swap(gDerivedEditor.layers[idx], gDerivedEditor.layers[idx + 1]);
-						RefreshDerivedLayerList(hWnd);
-						SendMessageW(GetDlgItem(hWnd, IDC_DERIVED_LAYER_LIST), LB_SETCURSEL, idx + 1, 0);
-						SyncDerivedControlsFromSelection(hWnd);
-						RebuildDerivedComposite();
-						InvalidateRect(GetDlgItem(hWnd, IDC_DERIVED_PREVIEW), NULL, TRUE);
-					}
-				}
-				break;
-
-				case IDC_DERIVED_SAVE:
-					if (SaveDerivedIconFromEditor(hWnd))
-						DestroyWindow(hWnd);
-					break;
-
-				case IDC_DERIVED_CANCEL:
-					DestroyWindow(hWnd);
-					break;
-			}
-			return 0;
-
-		case WM_CLOSE:
-			DestroyWindow(hWnd);
-			return 0;
-
-		case WM_DESTROY:
-			gDerivedEditor.draggingLayer = FALSE;
-			if (gRuntimeThemeUsers > 0)
-				gRuntimeThemeUsers--;
-			ReleaseRuntimeThemeResourcesIfUnused();
-			return 0;
+	case WM_DESTROY:
+		gDerivedEditor.draggingLayer = FALSE;
+		if (gRuntimeThemeUsers > 0)
+			gRuntimeThemeUsers--;
+		ReleaseRuntimeThemeResourcesIfUnused();
+		return 0;
 	}
 
 	return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
-
 /** Open the derived icon editor as a modal child and return saved file path when successful. */
-static BOOL ShowDerivedIconEditor(HWND hParent, const PickerItem& baseItem, std::wstring& savedPath)
+static BOOL ShowDerivedIconEditor(HWND hParent, const PickerItem &baseItem, std::wstring &savedPath)
 {
 	savedPath.clear();
 	gDerivedEditor = {};
@@ -3507,8 +3547,8 @@ static BOOL ShowDerivedIconEditor(HWND hParent, const PickerItem& baseItem, std:
 	wc.hInstance = GetModuleHandleW(NULL);
 	wc.lpszClassName = L"FoldrionDerivedIconEditor";
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
-	wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+	wc.hIcon = LoadIconA((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassW(&wc);
 
 	HWND hWnd = CreateWindowExW(
@@ -3518,17 +3558,15 @@ static BOOL ShowDerivedIconEditor(HWND hParent, const PickerItem& baseItem, std:
 		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
 		CW_USEDEFAULT, CW_USEDEFAULT,
 		([]() -> int
-		{
+		 {
 			RECT rc = { 0, 0, 840, 560 };
 			AdjustWindowRectEx(&rc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
-			return rc.right - rc.left;
-		})(),
+			return rc.right - rc.left; })(),
 		([]() -> int
-		{
+		 {
 			RECT rc = { 0, 0, 840, 560 };
 			AdjustWindowRectEx(&rc, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
-			return rc.bottom - rc.top;
-		})(),
+			return rc.bottom - rc.top; })(),
 		hParent, NULL, wc.hInstance, NULL);
 
 	if (!hWnd)
@@ -3536,6 +3574,7 @@ static BOOL ShowDerivedIconEditor(HWND hParent, const PickerItem& baseItem, std:
 
 	gDerivedEditor.hWnd = hWnd;
 	EnableWindow(hParent, FALSE);
+	CenterPopupToOwner(hWnd, hParent);
 	ShowWindow(hWnd, SW_SHOW);
 	UpdateWindow(hWnd);
 
@@ -3559,9 +3598,8 @@ static BOOL ShowDerivedIconEditor(HWND hParent, const PickerItem& baseItem, std:
 	return !savedPath.empty();
 }
 
-
 /** Locate one picker item by resource path and select it when available. */
-static void SelectPickerItemByResourcePath(HWND hWnd, const std::wstring& path)
+static void SelectPickerItemByResourcePath(HWND hWnd, const std::wstring &path)
 {
 	if (path.empty())
 		return;
@@ -3570,17 +3608,17 @@ static void SelectPickerItemByResourcePath(HWND hWnd, const std::wstring& path)
 	{
 		for (size_t i = 0; i < gPickerCategories[c].items.size(); i++)
 		{
-			const PickerItem& item = gPickerCategories[c].items[i];
+			const PickerItem &item = gPickerCategories[c].items[i];
 			if (!item.isBuiltIn && (_wcsicmp(item.resourcePath.c_str(), path.c_str()) == 0))
 			{
 				HWND hCat = GetDlgItem(hWnd, IDC_PICKER_CATEGORY);
-				SendMessageW(hCat, LB_SETCURSEL, (WPARAM) c, 0);
-				PopulatePickerItems(hWnd, (int) c);
+				SendMessageW(hCat, LB_SETCURSEL, (WPARAM)c, 0);
+				PopulatePickerItems(hWnd, (int)c);
 
 				HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
-				for (int row = 0; row < (int) gPickerVisibleItems.size(); row++)
+				for (int row = 0; row < (int)gPickerVisibleItems.size(); row++)
 				{
-					if ((gPickerVisibleItems[row].categoryIndex == (int) c) && (gPickerVisibleItems[row].itemIndex == (int) i))
+					if ((gPickerVisibleItems[row].categoryIndex == (int)c) && (gPickerVisibleItems[row].itemIndex == (int)i))
 					{
 						SendMessageW(hItem, LB_SETCURSEL, row, 0);
 						LoadPickerPreviewIcon(gPickerCategories[c].items[i]);
@@ -3594,9 +3632,8 @@ static void SelectPickerItemByResourcePath(HWND hWnd, const std::wstring& path)
 	}
 }
 
-
 /** Locate one picker item by resource path/index and select it when available. */
-static void SelectPickerItemByResource(HWND hWnd, const std::wstring& path, int resourceIndex)
+static void SelectPickerItemByResource(HWND hWnd, const std::wstring &path, int resourceIndex)
 {
 	if (path.empty())
 		return;
@@ -3605,20 +3642,20 @@ static void SelectPickerItemByResource(HWND hWnd, const std::wstring& path, int 
 	{
 		for (size_t i = 0; i < gPickerCategories[c].items.size(); i++)
 		{
-			const PickerItem& item = gPickerCategories[c].items[i];
+			const PickerItem &item = gPickerCategories[c].items[i];
 			if (item.isBuiltIn || _wcsicmp(item.resourcePath.c_str(), path.c_str()) != 0)
 				continue;
 			if ((resourceIndex >= 0) && (item.resourceIndex != resourceIndex))
 				continue;
 
 			HWND hCat = GetDlgItem(hWnd, IDC_PICKER_CATEGORY);
-			SendMessageW(hCat, LB_SETCURSEL, (WPARAM) c, 0);
-			PopulatePickerItems(hWnd, (int) c);
+			SendMessageW(hCat, LB_SETCURSEL, (WPARAM)c, 0);
+			PopulatePickerItems(hWnd, (int)c);
 
 			HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
-			for (int row = 0; row < (int) gPickerVisibleItems.size(); row++)
+			for (int row = 0; row < (int)gPickerVisibleItems.size(); row++)
 			{
-				if ((gPickerVisibleItems[row].categoryIndex == (int) c) && (gPickerVisibleItems[row].itemIndex == (int) i))
+				if ((gPickerVisibleItems[row].categoryIndex == (int)c) && (gPickerVisibleItems[row].itemIndex == (int)i))
 				{
 					SendMessageW(hItem, LB_SETCURSEL, row, 0);
 					LoadPickerPreviewIcon(gPickerCategories[c].items[i]);
@@ -3632,11 +3669,10 @@ static void SelectPickerItemByResource(HWND hWnd, const std::wstring& path, int 
 	}
 }
 
-
 /**
  * Return TRUE when one path lives under another directory path.
  */
-static BOOL IsPathUnderFolder(const std::wstring& filePath, const std::wstring& folderPath)
+static BOOL IsPathUnderFolder(const std::wstring &filePath, const std::wstring &folderPath)
 {
 	if (filePath.empty() || folderPath.empty())
 		return FALSE;
@@ -3659,11 +3695,10 @@ static BOOL IsPathUnderFolder(const std::wstring& filePath, const std::wstring& 
 	return (normalizedFile.compare(0, normalizedFolder.size(), normalizedFolder) == 0);
 }
 
-
 /**
  * Return TRUE when a picker item is a removable custom icon file.
  */
-static BOOL IsRemovableCustomPickerItem(const PickerItem& item)
+static BOOL IsRemovableCustomPickerItem(const PickerItem &item)
 {
 	if (item.isBuiltIn || item.resourcePath.empty())
 		return FALSE;
@@ -3678,10 +3713,9 @@ static BOOL IsRemovableCustomPickerItem(const PickerItem& item)
 
 	return ((_wcsicmp(ext, L".ico") == 0) || (_wcsicmp(ext, L".dll") == 0));
 }
-
 
 /** Return TRUE when a picker item can be renamed by the user. */
-static BOOL IsRenamableCustomPickerItem(const PickerItem& item)
+static BOOL IsRenamableCustomPickerItem(const PickerItem &item)
 {
 	if (item.isBuiltIn || item.resourcePath.empty())
 		return FALSE;
@@ -3696,7 +3730,6 @@ static BOOL IsRenamableCustomPickerItem(const PickerItem& item)
 
 	return ((_wcsicmp(ext, L".ico") == 0) || (_wcsicmp(ext, L".dll") == 0));
 }
-
 
 /**
  * Enable or disable picker delete button from current selection.
@@ -3709,15 +3742,15 @@ static void UpdatePickerDeleteButtonState(HWND hWnd)
 		return;
 
 	BOOL canDelete = FALSE;
-	int itemSel = (int) SendMessageW(hItem, LB_GETCURSEL, 0, 0);
+	int itemSel = (int)SendMessageW(hItem, LB_GETCURSEL, 0, 0);
 	if (itemSel != LB_ERR)
 	{
-		int visIdx = (int) SendMessageW(hItem, LB_GETITEMDATA, (WPARAM) itemSel, 0);
-		if ((visIdx >= 0) && (visIdx < (int) gPickerVisibleItems.size()))
+		int visIdx = (int)SendMessageW(hItem, LB_GETITEMDATA, (WPARAM)itemSel, 0);
+		if ((visIdx >= 0) && (visIdx < (int)gPickerVisibleItems.size()))
 		{
-			const PickerVisibleItem& vi = gPickerVisibleItems[visIdx];
-			if ((vi.categoryIndex >= 0) && (vi.categoryIndex < (int) gPickerCategories.size()) &&
-				(vi.itemIndex >= 0) && (vi.itemIndex < (int) gPickerCategories[vi.categoryIndex].items.size()))
+			const PickerVisibleItem &vi = gPickerVisibleItems[visIdx];
+			if ((vi.categoryIndex >= 0) && (vi.categoryIndex < (int)gPickerCategories.size()) &&
+				(vi.itemIndex >= 0) && (vi.itemIndex < (int)gPickerCategories[vi.categoryIndex].items.size()))
 			{
 				canDelete = IsRemovableCustomPickerItem(gPickerCategories[vi.categoryIndex].items[vi.itemIndex]);
 			}
@@ -3726,7 +3759,6 @@ static void UpdatePickerDeleteButtonState(HWND hWnd)
 
 	EnableWindow(hDeleteButton, canDelete);
 }
-
 
 /**
  * Delete selected custom icon file from disk with user confirmation.
@@ -3737,7 +3769,7 @@ static void DeleteSelectedCustomIcon(HWND hWnd)
 	if (!hItem)
 		return;
 
-	int itemSel = (int) SendMessageW(hItem, LB_GETCURSEL, 0, 0);
+	int itemSel = (int)SendMessageW(hItem, LB_GETCURSEL, 0, 0);
 	if (itemSel == LB_ERR)
 	{
 		MessageBoxA(hWnd, "Select an icon.", "Info:", MB_OK | MB_ICONINFORMATION);
@@ -3745,22 +3777,22 @@ static void DeleteSelectedCustomIcon(HWND hWnd)
 		return;
 	}
 
-	int visIdx = (int) SendMessageW(hItem, LB_GETITEMDATA, (WPARAM) itemSel, 0);
-	if ((visIdx < 0) || (visIdx >= (int) gPickerVisibleItems.size()))
+	int visIdx = (int)SendMessageW(hItem, LB_GETITEMDATA, (WPARAM)itemSel, 0);
+	if ((visIdx < 0) || (visIdx >= (int)gPickerVisibleItems.size()))
 	{
 		UpdatePickerDeleteButtonState(hWnd);
 		return;
 	}
 
-	const PickerVisibleItem& vi = gPickerVisibleItems[visIdx];
-	if ((vi.categoryIndex < 0) || (vi.categoryIndex >= (int) gPickerCategories.size()) ||
-		(vi.itemIndex < 0) || (vi.itemIndex >= (int) gPickerCategories[vi.categoryIndex].items.size()))
+	const PickerVisibleItem &vi = gPickerVisibleItems[visIdx];
+	if ((vi.categoryIndex < 0) || (vi.categoryIndex >= (int)gPickerCategories.size()) ||
+		(vi.itemIndex < 0) || (vi.itemIndex >= (int)gPickerCategories[vi.categoryIndex].items.size()))
 	{
 		UpdatePickerDeleteButtonState(hWnd);
 		return;
 	}
 
-	const PickerItem& item = gPickerCategories[vi.categoryIndex].items[vi.itemIndex];
+	const PickerItem &item = gPickerCategories[vi.categoryIndex].items[vi.itemIndex];
 	if (!IsRemovableCustomPickerItem(item))
 	{
 		MessageBoxA(hWnd, "Only custom ICO or DLL icons can be deleted.", "Info:", MB_OK | MB_ICONINFORMATION);
@@ -3774,14 +3806,14 @@ static void DeleteSelectedCustomIcon(HWND hWnd)
 	if (ext && (_wcsicmp(ext, L".dll") == 0))
 	{
 		_snwprintf_s(question, _countof(question), (_countof(question) - 1),
-			L"Delete this custom icon from DLL?\n\n%ls\nIcon: %ls",
-			fileName.c_str(), item.label.c_str());
+					 L"Delete this custom icon from DLL?\n\n%ls\nIcon: %ls",
+					 fileName.c_str(), item.label.c_str());
 	}
 	else
 	{
 		_snwprintf_s(question, _countof(question), (_countof(question) - 1),
-			L"Delete this custom icon file?\n\n%ls",
-			fileName.c_str());
+					 L"Delete this custom icon file?\n\n%ls",
+					 fileName.c_str());
 	}
 
 	if (MessageBoxW(hWnd, question, L"Confirm Delete", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
@@ -3792,7 +3824,7 @@ static void DeleteSelectedCustomIcon(HWND hWnd)
 
 	BOOL deleted = FALSE;
 	if (ext && (_wcsicmp(ext, L".dll") == 0))
-		deleted = DeleteCustomDllIconResource(item.resourcePath.c_str(), (UINT) item.resourceIndex);
+		deleted = DeleteCustomDllIconResource(item.resourcePath.c_str(), (UINT)item.resourceIndex);
 	else
 		deleted = DeleteFileW(item.resourcePath.c_str());
 
@@ -3818,12 +3850,11 @@ static void DeleteSelectedCustomIcon(HWND hWnd)
 	UpdatePickerDeleteButtonState(hWnd);
 }
 
-
 /**
  * Subclass to support Delete key and middle-click deletion in picker list.
  */
 static LRESULT CALLBACK PickerItemListSubclassProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam,
-	UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
+												   UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
 {
 	UNREFERENCED_PARAMETER(uIdSubclass);
 	UNREFERENCED_PARAMETER(dwRefData);
@@ -3834,77 +3865,76 @@ static LRESULT CALLBACK PickerItemListSubclassProc(HWND hWnd, UINT uMsg, WPARAM 
 
 	switch (uMsg)
 	{
-		case WM_KEYDOWN:
-			if (wParam == VK_DELETE)
-			{
-				SendMessageW(hParent, WM_PICKER_DELETE_REQUEST, 0, 0);
-				return 0;
-			}
-			break;
-
-		case WM_MBUTTONUP:
+	case WM_KEYDOWN:
+		if (wParam == VK_DELETE)
 		{
-			POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
-			DWORD rowResult = (DWORD) SendMessageW(hWnd, LB_ITEMFROMPOINT, 0, MAKELPARAM(pt.x, pt.y));
-			int clickedRow = LOWORD(rowResult);
-			BOOL outsideListItem = HIWORD(rowResult);
-			if (!outsideListItem && (clickedRow != LB_ERR))
-			{
-				SendMessageW(hWnd, LB_SETCURSEL, (WPARAM) clickedRow, 0);
-				SendMessageW(hParent, WM_PICKER_DELETE_REQUEST, (WPARAM) clickedRow, 0);
-				return 0;
-			}
+			SendMessageW(hParent, WM_PICKER_DELETE_REQUEST, 0, 0);
+			return 0;
 		}
 		break;
 
-		case WM_RBUTTONUP:
+	case WM_MBUTTONUP:
+	{
+		POINT pt = {(short)LOWORD(lParam), (short)HIWORD(lParam)};
+		DWORD rowResult = (DWORD)SendMessageW(hWnd, LB_ITEMFROMPOINT, 0, MAKELPARAM(pt.x, pt.y));
+		int clickedRow = LOWORD(rowResult);
+		BOOL outsideListItem = HIWORD(rowResult);
+		if (!outsideListItem && (clickedRow != LB_ERR))
 		{
-			POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
-			DWORD rowResult = (DWORD) SendMessageW(hWnd, LB_ITEMFROMPOINT, 0, MAKELPARAM(pt.x, pt.y));
-			int clickedRow = LOWORD(rowResult);
-			BOOL outsideListItem = HIWORD(rowResult);
+			SendMessageW(hWnd, LB_SETCURSEL, (WPARAM)clickedRow, 0);
+			SendMessageW(hParent, WM_PICKER_DELETE_REQUEST, (WPARAM)clickedRow, 0);
+			return 0;
+		}
+	}
+	break;
 
-			if (!outsideListItem && (clickedRow != LB_ERR))
+	case WM_RBUTTONUP:
+	{
+		POINT pt = {(short)LOWORD(lParam), (short)HIWORD(lParam)};
+		DWORD rowResult = (DWORD)SendMessageW(hWnd, LB_ITEMFROMPOINT, 0, MAKELPARAM(pt.x, pt.y));
+		int clickedRow = LOWORD(rowResult);
+		BOOL outsideListItem = HIWORD(rowResult);
+
+		if (!outsideListItem && (clickedRow != LB_ERR))
+		{
+			if ((size_t)clickedRow < gPickerVisibleItems.size())
 			{
-				if ((size_t) clickedRow < gPickerVisibleItems.size())
+				const PickerVisibleItem &visItem = gPickerVisibleItems[clickedRow];
+
+				if ((size_t)visItem.categoryIndex < gPickerCategories.size() &&
+					(size_t)visItem.itemIndex < gPickerCategories[visItem.categoryIndex].items.size())
 				{
-					const PickerVisibleItem& visItem = gPickerVisibleItems[clickedRow];
-
-					if ((size_t) visItem.categoryIndex < gPickerCategories.size() &&
-						(size_t) visItem.itemIndex < gPickerCategories[visItem.categoryIndex].items.size())
+					const PickerItem &item = gPickerCategories[visItem.categoryIndex].items[visItem.itemIndex];
+					if (IsRenamableCustomPickerItem(item))
 					{
-						const PickerItem& item = gPickerCategories[visItem.categoryIndex].items[visItem.itemIndex];
-						if (IsRenamableCustomPickerItem(item))
+						SendMessageW(hWnd, LB_SETCURSEL, (WPARAM)clickedRow, 0);
+
+						std::wstring initialName = item.label;
+						LPCWSTR ext = PathFindExtensionW(item.resourcePath.c_str());
+						if (ext && (_wcsicmp(ext, L".ico") == 0))
+							initialName = RemoveExtensionCopy(item.label);
+
+						std::wstring newName;
+						if (ShowRenameIconDialog(hParent, L"Rename Icon", L"New icon name", initialName, newName))
 						{
-							SendMessageW(hWnd, LB_SETCURSEL, (WPARAM) clickedRow, 0);
-
-							std::wstring initialName = item.label;
-							LPCWSTR ext = PathFindExtensionW(item.resourcePath.c_str());
-							if (ext && (_wcsicmp(ext, L".ico") == 0))
-								initialName = RemoveExtensionCopy(item.label);
-
-							std::wstring newName;
-							if (ShowRenameIconDialog(hParent, L"Rename Icon", L"New icon name", initialName, newName))
-							{
-								if (!RenameCustomPickerItem(hParent, item, newName))
-									MessageBoxA(hParent, "Unable to rename icon.", "Error:", MB_OK | MB_ICONERROR);
-							}
-							return 0;
+							if (!RenameCustomPickerItem(hParent, item, newName))
+								MessageBoxA(hParent, "Unable to rename icon.", "Error:", MB_OK | MB_ICONERROR);
 						}
+						return 0;
 					}
 				}
 			}
 		}
-		break;
+	}
+	break;
 
-		case WM_NCDESTROY:
-			RemoveWindowSubclass(hWnd, PickerItemListSubclassProc, 1);
-			break;
+	case WM_NCDESTROY:
+		RemoveWindowSubclass(hWnd, PickerItemListSubclassProc, 1);
+		break;
 	}
 
 	return DefSubclassProc(hWnd, uMsg, wParam, lParam);
 }
-
 
 /**
  * Picker window procedure.
@@ -3913,413 +3943,418 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 {
 	switch (msg)
 	{
-		case WM_CREATE:
-		{
-			gRuntimeThemeUsers++;
-			CreateWindowW(L"STATIC", L"Category", WS_CHILD | WS_VISIBLE,
-				12, 12, 500, 18, hWnd, NULL, NULL, NULL);
-			CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER,
-				12, 32, 500, 360, hWnd, (HMENU) IDC_PICKER_CATEGORY, NULL, NULL);
+	case WM_CREATE:
+	{
+		gRuntimeThemeUsers++;
+		CreateWindowW(L"STATIC", L"Category", WS_CHILD | WS_VISIBLE,
+					  12, 12, 500, 18, hWnd, NULL, NULL, NULL);
+		CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER,
+					  12, 32, 500, 360, hWnd, (HMENU)IDC_PICKER_CATEGORY, NULL, NULL);
 
-			CreateWindowW(L"STATIC", L"Icons", WS_CHILD | WS_VISIBLE,
-				524, 12, 80, 18, hWnd, NULL, NULL, NULL);
-			CreateWindowW(L"STATIC", L"Search", WS_CHILD | WS_VISIBLE,
-				606, 12, 48, 18, hWnd, NULL, NULL, NULL);
-			CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP,
-				658, 10, 386, 22, hWnd, (HMENU) IDC_PICKER_SEARCH, NULL, NULL);
-			CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER | LBS_OWNERDRAWFIXED,
-				524, 32, 520, 360, hWnd, (HMENU) IDC_PICKER_ITEM, NULL, NULL);
+		CreateWindowW(L"STATIC", L"Icons", WS_CHILD | WS_VISIBLE,
+					  524, 12, 80, 18, hWnd, NULL, NULL, NULL);
+		CreateWindowW(L"STATIC", L"Search", WS_CHILD | WS_VISIBLE,
+					  606, 12, 48, 18, hWnd, NULL, NULL, NULL);
+		CreateWindowW(L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL | WS_TABSTOP,
+					  658, 10, 386, 22, hWnd, (HMENU)IDC_PICKER_SEARCH, NULL, NULL);
+		CreateWindowW(L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | WS_BORDER | LBS_OWNERDRAWFIXED,
+					  524, 32, 520, 360, hWnd, (HMENU)IDC_PICKER_ITEM, NULL, NULL);
 
-			// --- Preview panel (right of icon list) ---
-			CreateWindowW(L"STATIC", L"Preview", WS_CHILD | WS_VISIBLE,
-				1056, 12, 150, 18, hWnd, (HMENU) IDC_PICKER_PREVIEW_LABEL, NULL, NULL);
-			CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW | SS_NOTIFY | WS_BORDER,
-				1056, 32, 150, 150, hWnd, (HMENU) IDC_PICKER_PREVIEW, NULL, NULL);
+		// --- Preview panel (right of icon list) ---
+		CreateWindowW(L"STATIC", L"Preview", WS_CHILD | WS_VISIBLE,
+					  1056, 12, 150, 18, hWnd, (HMENU)IDC_PICKER_PREVIEW_LABEL, NULL, NULL);
+		CreateWindowW(L"STATIC", L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW | SS_NOTIFY | WS_BORDER,
+					  1056, 32, 150, 150, hWnd, (HMENU)IDC_PICKER_PREVIEW, NULL, NULL);
 
-			CreateWindowW(L"BUTTON", L"Apply Icon", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
-				433, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_APPLY, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Import Icons", WS_CHILD | WS_VISIBLE,
-				148, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_IMPORT, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Delete Icon", WS_CHILD | WS_VISIBLE,
-				687, 404, 95, 28, hWnd, (HMENU) IDC_PICKER_DELETE, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Create Derived Icon", WS_CHILD | WS_VISIBLE,
-				538, 404, 139, 28, hWnd, (HMENU) IDC_PICKER_CREATE_DERIVED, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Open Icons Folder", WS_CHILD | WS_VISIBLE,
-				12, 404, 130, 28, hWnd, (HMENU) IDC_PICKER_OPEN_ICONS, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Restore Default", WS_CHILD | WS_VISIBLE,
-				1002, 404, 120, 28, hWnd, (HMENU) IDC_PICKER_RESTORE, NULL, NULL);
-			CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
-				1132, 404, 74, 28, hWnd, (HMENU) IDC_PICKER_CANCEL, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Apply Icon", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+					  433, 404, 95, 28, hWnd, (HMENU)IDC_PICKER_APPLY, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Import Icons", WS_CHILD | WS_VISIBLE,
+					  148, 404, 95, 28, hWnd, (HMENU)IDC_PICKER_IMPORT, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Delete Icon", WS_CHILD | WS_VISIBLE,
+					  687, 404, 95, 28, hWnd, (HMENU)IDC_PICKER_DELETE, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Create Derived Icon", WS_CHILD | WS_VISIBLE,
+					  538, 404, 139, 28, hWnd, (HMENU)IDC_PICKER_CREATE_DERIVED, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Open Icons Folder", WS_CHILD | WS_VISIBLE,
+					  12, 404, 130, 28, hWnd, (HMENU)IDC_PICKER_OPEN_ICONS, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Restore Default", WS_CHILD | WS_VISIBLE,
+					  1002, 404, 120, 28, hWnd, (HMENU)IDC_PICKER_RESTORE, NULL, NULL);
+		CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
+					  1132, 404, 74, 28, hWnd, (HMENU)IDC_PICKER_CANCEL, NULL, NULL);
 
-			PopulatePickerCategories(hWnd);
+		PopulatePickerCategories(hWnd);
 
-			// Show the folder's existing icon in the preview until user picks something.
-			LoadFolderCurrentPreviewIcon();
-			UpdatePickerPreviewLabel(hWnd);
-			SetWindowSubclass(GetDlgItem(hWnd, IDC_PICKER_ITEM), PickerItemListSubclassProc, 1, 0);
-			UpdatePickerDeleteButtonState(hWnd);
-			ApplyRuntimeTheme(hWnd);
-		}
+		// Show the folder's existing icon in the preview until user picks something.
+		LoadFolderCurrentPreviewIcon();
+		UpdatePickerPreviewLabel(hWnd);
+		SetWindowSubclass(GetDlgItem(hWnd, IDC_PICKER_ITEM), PickerItemListSubclassProc, 1, 0);
+		UpdatePickerDeleteButtonState(hWnd);
+		ApplyRuntimeTheme(hWnd);
+	}
 		return 0;
 
-		case WM_THEMECHANGED:
-		case WM_SYSCOLORCHANGE:
-		case WM_SETTINGCHANGE:
-			ApplyRuntimeTheme(hWnd);
-			return 0;
+	case WM_THEMECHANGED:
+	case WM_SYSCOLORCHANGE:
+	case WM_SETTINGCHANGE:
+		ApplyRuntimeTheme(hWnd);
+		return 0;
 
-		case WM_ERASEBKGND:
+	case WM_ERASEBKGND:
+	{
+		RECT rc = {};
+		GetClientRect(hWnd, &rc);
+		FillRect((HDC)wParam, &rc, gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+		return 1;
+	}
+
+	case WM_CTLCOLORSTATIC:
+	{
+		HDC hdc = (HDC)wParam;
+		SetTextColor(hdc, gRuntimeTextColor);
+		SetBkColor(hdc, gRuntimeBackgroundColor);
+		return (LRESULT)(gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+	}
+
+	case WM_CTLCOLOREDIT:
+	case WM_CTLCOLORLISTBOX:
+	{
+		HDC hdc = (HDC)wParam;
+		SetTextColor(hdc, gRuntimeTextColor);
+		SetBkColor(hdc, gRuntimePanelColor);
+		return (LRESULT)(gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
+	}
+
+	case WM_MEASUREITEM:
+	{
+		LPMEASUREITEMSTRUCT mi = (LPMEASUREITEMSTRUCT)lParam;
+		if (mi && (mi->CtlID == IDC_PICKER_ITEM))
 		{
-			RECT rc = {};
-			GetClientRect(hWnd, &rc);
-			FillRect((HDC) wParam, &rc, gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
-			return 1;
-		}
-
-		case WM_CTLCOLORSTATIC:
-		{
-			HDC hdc = (HDC) wParam;
-			SetTextColor(hdc, gRuntimeTextColor);
-			SetBkColor(hdc, gRuntimeBackgroundColor);
-			return (LRESULT) (gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
-		}
-
-		case WM_CTLCOLOREDIT:
-		case WM_CTLCOLORLISTBOX:
-		{
-			HDC hdc = (HDC) wParam;
-			SetTextColor(hdc, gRuntimeTextColor);
-			SetBkColor(hdc, gRuntimePanelColor);
-			return (LRESULT) (gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
-		}
-
-		case WM_MEASUREITEM:
-		{
-			LPMEASUREITEMSTRUCT mi = (LPMEASUREITEMSTRUCT) lParam;
-			if (mi && (mi->CtlID == IDC_PICKER_ITEM))
-			{
-				mi->itemHeight = 22;
-				return TRUE;
-			}
-		}
-		break;
-
-		case WM_DRAWITEM:
-		{
-			LPDRAWITEMSTRUCT di = (LPDRAWITEMSTRUCT) lParam;
-			if (!di) break;
-
-			// --- Preview box ---
-			if (di->CtlID == IDC_PICKER_PREVIEW)
-			{
-				FillRect(di->hDC, &di->rcItem, gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
-				if (gPickerPreviewIcon)
-				{
-					int w = di->rcItem.right  - di->rcItem.left;
-					int h = di->rcItem.bottom - di->rcItem.top;
-					int sz = min(w, h) - 8;
-					if (sz < 1) sz = 1;
-					int ox = di->rcItem.left + (w - sz) / 2;
-					int oy = di->rcItem.top  + (h - sz) / 2;
-					DrawIconEx(di->hDC, ox, oy, gPickerPreviewIcon, sz, sz, 0, NULL, DI_NORMAL);
-				}
-				return TRUE;
-			}
-
-			if ((di->CtlID != IDC_PICKER_ITEM) || (di->itemID == UINT_MAX))
-				break;
-
-			HBRUSH bgBrush = NULL;
-			COLORREF textColor = gRuntimeTextColor;
-			if (di->itemState & ODS_SELECTED)
-			{
-				bgBrush = gRuntimeSelectionBrush ? gRuntimeSelectionBrush : GetSysColorBrush(COLOR_HIGHLIGHT);
-				textColor = gRuntimeSelectionTextColor;
-			}
-			else
-				bgBrush = gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW);
-
-			FillRect(di->hDC, &di->rcItem, bgBrush);
-
-			int visibleIndex = (int) SendMessageW(di->hwndItem, LB_GETITEMDATA, di->itemID, 0);
-			if ((visibleIndex < 0) || (visibleIndex >= (int) gPickerVisibleItems.size()))
-				return TRUE;
-
-			const PickerVisibleItem& visibleItem = gPickerVisibleItems[visibleIndex];
-			if ((visibleItem.categoryIndex < 0) || (visibleItem.categoryIndex >= (int) gPickerCategories.size()))
-				return TRUE;
-
-			if ((visibleItem.itemIndex < 0) || (visibleItem.itemIndex >= (int) gPickerCategories[visibleItem.categoryIndex].items.size()))
-				return TRUE;
-
-			PickerItem& item = gPickerCategories[visibleItem.categoryIndex].items[visibleItem.itemIndex];
-			HICON hIcon = ResolvePickerItemIcon(item);
-
-			int iconX = di->rcItem.left + 4;
-			int iconY = di->rcItem.top + ((di->rcItem.bottom - di->rcItem.top - 16) / 2);
-			if (hIcon)
-				DrawIconEx(di->hDC, iconX, iconY, hIcon, 16, 16, 0, NULL, DI_NORMAL);
-
-			RECT textRc = di->rcItem;
-			textRc.left += 26;
-			SetBkMode(di->hDC, TRANSPARENT);
-			SetTextColor(di->hDC, textColor);
-			DrawTextW(di->hDC, gPickerVisibleItems[visibleIndex].displayLabel.c_str(), -1, &textRc, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-
-			if (di->itemState & ODS_FOCUS)
-				DrawFocusRect(di->hDC, &di->rcItem);
-
+			mi->itemHeight = 22;
 			return TRUE;
 		}
-		break;
+	}
+	break;
 
-		case WM_COMMAND:
+	case WM_DRAWITEM:
+	{
+		LPDRAWITEMSTRUCT di = (LPDRAWITEMSTRUCT)lParam;
+		if (!di)
+			break;
+
+		// --- Preview box ---
+		if (di->CtlID == IDC_PICKER_PREVIEW)
 		{
-			switch (LOWORD(wParam))
+			FillRect(di->hDC, &di->rcItem, gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
+			if (gPickerPreviewIcon)
 			{
-				case IDC_PICKER_DELETE:
-				DeleteSelectedCustomIcon(hWnd);
-				break;
+				int w = di->rcItem.right - di->rcItem.left;
+				int h = di->rcItem.bottom - di->rcItem.top;
+				int sz = min(w, h) - 8;
+				if (sz < 1)
+					sz = 1;
+				int ox = di->rcItem.left + (w - sz) / 2;
+				int oy = di->rcItem.top + (h - sz) / 2;
+				DrawIconEx(di->hDC, ox, oy, gPickerPreviewIcon, sz, sz, 0, NULL, DI_NORMAL);
+			}
+			return TRUE;
+		}
 
-				case IDC_PICKER_PREVIEW:
-				if (HIWORD(wParam) == STN_CLICKED)
+		if ((di->CtlID != IDC_PICKER_ITEM) || (di->itemID == UINT_MAX))
+			break;
+
+		HBRUSH bgBrush = NULL;
+		COLORREF textColor = gRuntimeTextColor;
+		if (di->itemState & ODS_SELECTED)
+		{
+			bgBrush = gRuntimeSelectionBrush ? gRuntimeSelectionBrush : GetSysColorBrush(COLOR_HIGHLIGHT);
+			textColor = gRuntimeSelectionTextColor;
+		}
+		else
+			bgBrush = gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW);
+
+		FillRect(di->hDC, &di->rcItem, bgBrush);
+
+		int visibleIndex = (int)SendMessageW(di->hwndItem, LB_GETITEMDATA, di->itemID, 0);
+		if ((visibleIndex < 0) || (visibleIndex >= (int)gPickerVisibleItems.size()))
+			return TRUE;
+
+		const PickerVisibleItem &visibleItem = gPickerVisibleItems[visibleIndex];
+		if ((visibleItem.categoryIndex < 0) || (visibleItem.categoryIndex >= (int)gPickerCategories.size()))
+			return TRUE;
+
+		if ((visibleItem.itemIndex < 0) || (visibleItem.itemIndex >= (int)gPickerCategories[visibleItem.categoryIndex].items.size()))
+			return TRUE;
+
+		PickerItem &item = gPickerCategories[visibleItem.categoryIndex].items[visibleItem.itemIndex];
+		HICON hIcon = ResolvePickerItemIcon(item);
+
+		int iconX = di->rcItem.left + 4;
+		int iconY = di->rcItem.top + ((di->rcItem.bottom - di->rcItem.top - 16) / 2);
+		if (hIcon)
+			DrawIconEx(di->hDC, iconX, iconY, hIcon, 16, 16, 0, NULL, DI_NORMAL);
+
+		RECT textRc = di->rcItem;
+		textRc.left += 26;
+		SetBkMode(di->hDC, TRANSPARENT);
+		SetTextColor(di->hDC, textColor);
+		DrawTextW(di->hDC, gPickerVisibleItems[visibleIndex].displayLabel.c_str(), -1, &textRc, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+		if (di->itemState & ODS_FOCUS)
+			DrawFocusRect(di->hDC, &di->rcItem);
+
+		return TRUE;
+	}
+	break;
+
+	case WM_COMMAND:
+	{
+		switch (LOWORD(wParam))
+		{
+		case IDC_PICKER_DELETE:
+			DeleteSelectedCustomIcon(hWnd);
+			break;
+
+		case IDC_PICKER_PREVIEW:
+			if (HIWORD(wParam) == STN_CLICKED)
+			{
+				// Reload and display the folder's current (existing) icon.
+				LoadFolderCurrentPreviewIcon();
+				HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
+				if (hPreview)
+					InvalidateRect(hPreview, NULL, TRUE);
+				UpdatePickerPreviewLabel(hWnd);
+			}
+			break;
+
+		case IDC_PICKER_SEARCH:
+			if (HIWORD(wParam) == EN_CHANGE)
+			{
+				// Debounce heavy filtering work while user is typing.
+				SetTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID, PICKER_SEARCH_DEBOUNCE_MS, NULL);
+			}
+			break;
+
+		case IDC_PICKER_CATEGORY:
+			if (HIWORD(wParam) == LBN_SELCHANGE)
+			{
+				// Clear search and preview when switching category.
+				HWND hSearch = GetDlgItem(hWnd, IDC_PICKER_SEARCH);
+				if (hSearch)
 				{
-					// Reload and display the folder's current (existing) icon.
-					LoadFolderCurrentPreviewIcon();
-					HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
-					if (hPreview) InvalidateRect(hPreview, NULL, TRUE);
-					UpdatePickerPreviewLabel(hWnd);
+					KillTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID);
+					SetWindowTextW(hSearch, L"");
+					gPickerSearchQuery.clear();
 				}
-				break;
+				ReleasePickerPreviewIcon();
+				HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
+				if (hPreview)
+					InvalidateRect(hPreview, NULL, TRUE);
+				UpdatePickerPreviewLabel(hWnd);
+				ApplyPickerSearchNow(hWnd);
+				UpdatePickerDeleteButtonState(hWnd);
+			}
+			break;
 
-				case IDC_PICKER_SEARCH:
-				if (HIWORD(wParam) == EN_CHANGE)
+		case IDC_PICKER_ITEM:
+			if (HIWORD(wParam) == LBN_SELCHANGE)
+			{
+				HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
+				int itemSel = (int)SendMessageW(hItem, LB_GETCURSEL, 0, 0);
+				if (itemSel != LB_ERR)
 				{
-					// Debounce heavy filtering work while user is typing.
-					SetTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID, PICKER_SEARCH_DEBOUNCE_MS, NULL);
-				}
-				break;
-
-				case IDC_PICKER_CATEGORY:
-				if (HIWORD(wParam) == LBN_SELCHANGE)
-				{
-					// Clear search and preview when switching category.
-					HWND hSearch = GetDlgItem(hWnd, IDC_PICKER_SEARCH);
-					if (hSearch)
+					int visIdx = (int)SendMessageW(hItem, LB_GETITEMDATA, (WPARAM)itemSel, 0);
+					if ((visIdx >= 0) && (visIdx < (int)gPickerVisibleItems.size()))
 					{
-						KillTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID);
-						SetWindowTextW(hSearch, L"");
-						gPickerSearchQuery.clear();
-					}
-					ReleasePickerPreviewIcon();
-					HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
-					if (hPreview) InvalidateRect(hPreview, NULL, TRUE);
-					UpdatePickerPreviewLabel(hWnd);
-					ApplyPickerSearchNow(hWnd);
-					UpdatePickerDeleteButtonState(hWnd);
-				}
-				break;
-
-				case IDC_PICKER_ITEM:
-				if (HIWORD(wParam) == LBN_SELCHANGE)
-				{
-					HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
-					int itemSel = (int) SendMessageW(hItem, LB_GETCURSEL, 0, 0);
-					if (itemSel != LB_ERR)
-					{
-						int visIdx = (int) SendMessageW(hItem, LB_GETITEMDATA, (WPARAM) itemSel, 0);
-						if ((visIdx >= 0) && (visIdx < (int) gPickerVisibleItems.size()))
+						const PickerVisibleItem &vi = gPickerVisibleItems[visIdx];
+						if ((vi.categoryIndex >= 0) && (vi.categoryIndex < (int)gPickerCategories.size()) &&
+							(vi.itemIndex >= 0) && (vi.itemIndex < (int)gPickerCategories[vi.categoryIndex].items.size()))
 						{
-							const PickerVisibleItem& vi = gPickerVisibleItems[visIdx];
-							if ((vi.categoryIndex >= 0) && (vi.categoryIndex < (int) gPickerCategories.size()) &&
-								(vi.itemIndex >= 0) && (vi.itemIndex < (int) gPickerCategories[vi.categoryIndex].items.size()))
-							{
-								LoadPickerPreviewIcon(gPickerCategories[vi.categoryIndex].items[vi.itemIndex]);
-							}
+							LoadPickerPreviewIcon(gPickerCategories[vi.categoryIndex].items[vi.itemIndex]);
 						}
 					}
-					HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
-					if (hPreview) InvalidateRect(hPreview, NULL, TRUE);
-					UpdatePickerPreviewLabel(hWnd);
-					UpdatePickerDeleteButtonState(hWnd);
 				}
-				else if (HIWORD(wParam) == LBN_DBLCLK)
-				{
-					SendMessageW(
-						hWnd,
-						WM_COMMAND,
-						MAKEWPARAM(IDC_PICKER_APPLY, BN_CLICKED),
-						(LPARAM) GetDlgItem(hWnd, IDC_PICKER_APPLY));
-				}
-				break;
+				HWND hPreview = GetDlgItem(hWnd, IDC_PICKER_PREVIEW);
+				if (hPreview)
+					InvalidateRect(hPreview, NULL, TRUE);
+				UpdatePickerPreviewLabel(hWnd);
+				UpdatePickerDeleteButtonState(hWnd);
+			}
+			else if (HIWORD(wParam) == LBN_DBLCLK)
+			{
+				SendMessageW(
+					hWnd,
+					WM_COMMAND,
+					MAKEWPARAM(IDC_PICKER_APPLY, BN_CLICKED),
+					(LPARAM)GetDlgItem(hWnd, IDC_PICKER_APPLY));
+			}
+			break;
 
-				case IDC_PICKER_APPLY:
-				{
-					HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
-					int itemSel = (int) SendMessageW(hItem, LB_GETCURSEL, 0, 0);
-					if (itemSel == LB_ERR)
-					{
-						MessageBoxA(hWnd, "Select an icon.", "Info:", MB_OK | MB_ICONINFORMATION);
-						break;
-					}
-
-					int visibleIndex = (int) SendMessageW(hItem, LB_GETITEMDATA, (WPARAM) itemSel, 0);
-					if ((visibleIndex < 0) || (visibleIndex >= (int) gPickerVisibleItems.size()))
-						break;
-
-					const PickerVisibleItem& visibleItem = gPickerVisibleItems[visibleIndex];
-					if ((visibleItem.categoryIndex < 0) || (visibleItem.categoryIndex >= (int) gPickerCategories.size()))
-						break;
-
-					if ((visibleItem.itemIndex < 0) || (visibleItem.itemIndex >= (int) gPickerCategories[visibleItem.categoryIndex].items.size()))
-						break;
-
-					const PickerItem& item = gPickerCategories[visibleItem.categoryIndex].items[visibleItem.itemIndex];
-				
-					// Check if this is system default icon picker
-					if (gPickerTargetFolder == L"<system-default>")
-					{
-						// Store result in global variables for system default icon
-						if (item.isBuiltIn)
-						{
-							std::wstring exePath = GetCurrentExePath();
-							if (!exePath.empty())
-							{
-								gSystemDefaultIconPath = exePath;
-								gSystemDefaultIconIndex = item.builtInOffset + item.builtInIndex;
-							}
-						}
-						else
-						{
-							gSystemDefaultIconPath = item.resourcePath;
-							gSystemDefaultIconIndex = item.resourceIndex;
-						}
-						gSystemDefaultIconSelected = TRUE;
-						DestroyWindow(hWnd);
-					}
-					else
-					{
-						// Original per-folder icon setting
-						if (item.isBuiltIn)
-						{
-							// Apply built-in colors using the currently running EXE resources.
-							std::wstring exePath = GetCurrentExePath();
-							if (!exePath.empty())
-								SetFolderIconResource(exePath.c_str(), item.builtInOffset + item.builtInIndex, (LPWSTR) gPickerTargetFolder.c_str());
-							else
-								SetFolderColor(item.builtInIndex, (LPWSTR) gPickerTargetFolder.c_str());
-						}
-						else
-							SetFolderIconResource(item.resourcePath.c_str(), item.resourceIndex, (LPWSTR) gPickerTargetFolder.c_str());
-
-						ResetWindowsIconCache();
-						DestroyWindow(hWnd);
-					}
-				}
-				break;
-
-				case IDC_PICKER_IMPORT:
-				{
-					UINT copiedCount = 0;
-					UINT convertedCount = 0;
-					UINT failedCount = 0;
-					std::vector<std::wstring> failedFiles;
-
-					if (!ImportCustomIconFiles(hWnd, &copiedCount, &convertedCount, &failedCount, &failedFiles))
-						break;
-
-					if (isInstalled)
-						RefreshInstalledShellMenu();
-
-					ReleasePickerIcons();
-					BuildPickerCategories(gPickerCategories);
-					PopulatePickerCategories(hWnd);
-					UpdatePickerDeleteButtonState(hWnd);
-
-					char msg[1024];
-					sprintf_s(msg, sizeof(msg),
-						"Imported %u file(s), converted %u image(s), failed %u file(s).",
-						copiedCount, convertedCount, failedCount);
-					AppendFailedImportList(msg, sizeof(msg), failedFiles);
-					MessageBoxA(hWnd, msg, "Completion:", (MB_OK | (failedCount ? MB_ICONWARNING : MB_ICONASTERISK)));
-				}
-				break;
-
-				case IDC_PICKER_CREATE_DERIVED:
-				{
-					HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
-					int itemSel = (int) SendMessageW(hItem, LB_GETCURSEL, 0, 0);
-					if (itemSel == LB_ERR)
-					{
-						MessageBoxA(hWnd, "Select an icon first.", "Info:", MB_OK | MB_ICONINFORMATION);
-						break;
-					}
-
-					int visibleIndex = (int) SendMessageW(hItem, LB_GETITEMDATA, (WPARAM) itemSel, 0);
-					if ((visibleIndex < 0) || (visibleIndex >= (int) gPickerVisibleItems.size()))
-						break;
-
-					const PickerVisibleItem& visibleItem = gPickerVisibleItems[visibleIndex];
-					if ((visibleItem.categoryIndex < 0) || (visibleItem.categoryIndex >= (int) gPickerCategories.size()))
-						break;
-
-					if ((visibleItem.itemIndex < 0) || (visibleItem.itemIndex >= (int) gPickerCategories[visibleItem.categoryIndex].items.size()))
-						break;
-
-					std::wstring savedPath;
-					const PickerItem& selectedItem = gPickerCategories[visibleItem.categoryIndex].items[visibleItem.itemIndex];
-					if (ShowDerivedIconEditor(hWnd, selectedItem, savedPath))
-					{
-						if (isInstalled)
-							RefreshInstalledShellMenu();
-
-						ReleasePickerIcons();
-						BuildPickerCategories(gPickerCategories);
-						PopulatePickerCategories(hWnd);
-						SelectPickerItemByResourcePath(hWnd, savedPath);
-						UpdatePickerDeleteButtonState(hWnd);
-					}
-				}
-				break;
-
-				case IDC_PICKER_OPEN_ICONS:
-				{
-					WCHAR iconsPath[MAX_PATH];
-					if (_snwprintf_s(iconsPath, _countof(iconsPath), (_countof(iconsPath) - 1), L"%sicons", myPathGlobal) < 1)
-					{
-						MessageBoxA(hWnd, "Unable to build icons folder path.", "Error:", (MB_OK | MB_ICONERROR));
-						break;
-					}
-
-					if (!EnsureDirectoryExists(iconsPath))
-					{
-						MessageBoxA(hWnd, "Unable to create icons folder.", "Error:", (MB_OK | MB_ICONERROR));
-						break;
-					}
-
-					if (!OpenDirectoryInExplorer(iconsPath))
-						MessageBoxA(hWnd, "Unable to open icons folder.", "Error:", (MB_OK | MB_ICONERROR));
-				}
-				break;
-
-				case IDC_PICKER_RESTORE:
-				SetFolderColor(COLOR_ICON_COUNT, (LPWSTR) gPickerTargetFolder.c_str());
-				ResetWindowsIconCache();
-				DestroyWindow(hWnd);
-				break;
-
-				case IDC_PICKER_CANCEL:
-				DestroyWindow(hWnd);
+		case IDC_PICKER_APPLY:
+		{
+			HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
+			int itemSel = (int)SendMessageW(hItem, LB_GETCURSEL, 0, 0);
+			if (itemSel == LB_ERR)
+			{
+				MessageBoxA(hWnd, "Select an icon.", "Info:", MB_OK | MB_ICONINFORMATION);
 				break;
 			}
+
+			int visibleIndex = (int)SendMessageW(hItem, LB_GETITEMDATA, (WPARAM)itemSel, 0);
+			if ((visibleIndex < 0) || (visibleIndex >= (int)gPickerVisibleItems.size()))
+				break;
+
+			const PickerVisibleItem &visibleItem = gPickerVisibleItems[visibleIndex];
+			if ((visibleItem.categoryIndex < 0) || (visibleItem.categoryIndex >= (int)gPickerCategories.size()))
+				break;
+
+			if ((visibleItem.itemIndex < 0) || (visibleItem.itemIndex >= (int)gPickerCategories[visibleItem.categoryIndex].items.size()))
+				break;
+
+			const PickerItem &item = gPickerCategories[visibleItem.categoryIndex].items[visibleItem.itemIndex];
+
+			// Check if this is system default icon picker
+			if (gPickerTargetFolder == L"<system-default>")
+			{
+				// Store result in global variables for system default icon
+				if (item.isBuiltIn)
+				{
+					std::wstring exePath = GetCurrentExePath();
+					if (!exePath.empty())
+					{
+						gSystemDefaultIconPath = exePath;
+						gSystemDefaultIconIndex = item.builtInOffset + item.builtInIndex;
+					}
+				}
+				else
+				{
+					gSystemDefaultIconPath = item.resourcePath;
+					gSystemDefaultIconIndex = item.resourceIndex;
+				}
+				gSystemDefaultIconSelected = TRUE;
+				DestroyWindow(hWnd);
+			}
+			else
+			{
+				// Original per-folder icon setting
+				if (item.isBuiltIn)
+				{
+					// Apply built-in colors using the currently running EXE resources.
+					std::wstring exePath = GetCurrentExePath();
+					if (!exePath.empty())
+						SetFolderIconResource(exePath.c_str(), item.builtInOffset + item.builtInIndex, (LPWSTR)gPickerTargetFolder.c_str());
+					else
+						SetFolderColor(item.builtInIndex, (LPWSTR)gPickerTargetFolder.c_str());
+				}
+				else
+					SetFolderIconResource(item.resourcePath.c_str(), item.resourceIndex, (LPWSTR)gPickerTargetFolder.c_str());
+
+				ResetWindowsIconCache();
+				DestroyWindow(hWnd);
+			}
 		}
+		break;
+
+		case IDC_PICKER_IMPORT:
+		{
+			UINT copiedCount = 0;
+			UINT convertedCount = 0;
+			UINT failedCount = 0;
+			std::vector<std::wstring> failedFiles;
+
+			if (!ImportCustomIconFiles(hWnd, &copiedCount, &convertedCount, &failedCount, &failedFiles))
+				break;
+
+			if (isInstalled)
+				RefreshInstalledShellMenu();
+
+			ReleasePickerIcons();
+			BuildPickerCategories(gPickerCategories);
+			PopulatePickerCategories(hWnd);
+			UpdatePickerDeleteButtonState(hWnd);
+
+			char msg[1024];
+			sprintf_s(msg, sizeof(msg),
+					  "Imported %u file(s), converted %u image(s), failed %u file(s).",
+					  copiedCount, convertedCount, failedCount);
+			AppendFailedImportList(msg, sizeof(msg), failedFiles);
+			MessageBoxA(hWnd, msg, "Completion:", (MB_OK | (failedCount ? MB_ICONWARNING : MB_ICONASTERISK)));
+		}
+		break;
+
+		case IDC_PICKER_CREATE_DERIVED:
+		{
+			HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
+			int itemSel = (int)SendMessageW(hItem, LB_GETCURSEL, 0, 0);
+			if (itemSel == LB_ERR)
+			{
+				MessageBoxA(hWnd, "Select an icon first.", "Info:", MB_OK | MB_ICONINFORMATION);
+				break;
+			}
+
+			int visibleIndex = (int)SendMessageW(hItem, LB_GETITEMDATA, (WPARAM)itemSel, 0);
+			if ((visibleIndex < 0) || (visibleIndex >= (int)gPickerVisibleItems.size()))
+				break;
+
+			const PickerVisibleItem &visibleItem = gPickerVisibleItems[visibleIndex];
+			if ((visibleItem.categoryIndex < 0) || (visibleItem.categoryIndex >= (int)gPickerCategories.size()))
+				break;
+
+			if ((visibleItem.itemIndex < 0) || (visibleItem.itemIndex >= (int)gPickerCategories[visibleItem.categoryIndex].items.size()))
+				break;
+
+			std::wstring savedPath;
+			const PickerItem &selectedItem = gPickerCategories[visibleItem.categoryIndex].items[visibleItem.itemIndex];
+			if (ShowDerivedIconEditor(hWnd, selectedItem, savedPath))
+			{
+				if (isInstalled)
+					RefreshInstalledShellMenu();
+
+				ReleasePickerIcons();
+				BuildPickerCategories(gPickerCategories);
+				PopulatePickerCategories(hWnd);
+				SelectPickerItemByResourcePath(hWnd, savedPath);
+				UpdatePickerDeleteButtonState(hWnd);
+			}
+		}
+		break;
+
+		case IDC_PICKER_OPEN_ICONS:
+		{
+			WCHAR iconsPath[MAX_PATH];
+			if (_snwprintf_s(iconsPath, _countof(iconsPath), (_countof(iconsPath) - 1), L"%sicons", myPathGlobal) < 1)
+			{
+				MessageBoxA(hWnd, "Unable to build icons folder path.", "Error:", (MB_OK | MB_ICONERROR));
+				break;
+			}
+
+			if (!EnsureDirectoryExists(iconsPath))
+			{
+				MessageBoxA(hWnd, "Unable to create icons folder.", "Error:", (MB_OK | MB_ICONERROR));
+				break;
+			}
+
+			if (!OpenDirectoryInExplorer(iconsPath))
+				MessageBoxA(hWnd, "Unable to open icons folder.", "Error:", (MB_OK | MB_ICONERROR));
+		}
+		break;
+
+		case IDC_PICKER_RESTORE:
+			SetFolderColor(COLOR_ICON_COUNT, (LPWSTR)gPickerTargetFolder.c_str());
+			ResetWindowsIconCache();
+			DestroyWindow(hWnd);
+			break;
+
+		case IDC_PICKER_CANCEL:
+			DestroyWindow(hWnd);
+			break;
+		}
+	}
 		return 0;
 
-		case WM_PICKER_DELETE_REQUEST:
-			DeleteSelectedCustomIcon(hWnd);
-			return 0;
+	case WM_PICKER_DELETE_REQUEST:
+		DeleteSelectedCustomIcon(hWnd);
+		return 0;
 
-		case WM_TIMER:
+	case WM_TIMER:
 		if (wParam == PICKER_SEARCH_DEBOUNCE_TIMER_ID)
 		{
 			KillTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID);
@@ -4328,11 +4363,11 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 		}
 		break;
 
-		case WM_CLOSE:
+	case WM_CLOSE:
 		DestroyWindow(hWnd);
 		return 0;
 
-		case WM_DESTROY:
+	case WM_DESTROY:
 		KillTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID);
 		ReleasePickerIcons();
 		ReleasePickerPreviewIcon();
@@ -4347,7 +4382,6 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 
 	return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
-
 
 /**
  * Show the runtime icon picker window and block until closed.
@@ -4367,8 +4401,8 @@ static int ShowFolderIconPicker(LPCWSTR folderPath)
 	wc.hInstance = GetModuleHandleW(NULL);
 	wc.lpszClassName = L"FoldrionRuntimePicker";
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
-	wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+	wc.hIcon = LoadIconA((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassW(&wc);
 
 	HWND hWnd = CreateWindowExW(
@@ -4382,6 +4416,7 @@ static int ShowFolderIconPicker(LPCWSTR folderPath)
 	if (!hWnd)
 		return EXIT_FAILURE;
 
+	CenterWindowOnScreen(hWnd, GetForegroundWindow());
 	ShowWindow(hWnd, SW_SHOW);
 	UpdateWindow(hWnd);
 
@@ -4451,8 +4486,8 @@ static int ShowSystemDefaultIconPicker()
 	wc.hInstance = GetModuleHandleW(NULL);
 	wc.lpszClassName = L"FoldrionSystemDefaultIconPicker";
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
-	wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+	wc.hIcon = LoadIconA((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassW(&wc);
 
 	HWND hWnd = CreateWindowExW(
@@ -4466,6 +4501,7 @@ static int ShowSystemDefaultIconPicker()
 	if (!hWnd)
 		return EXIT_FAILURE;
 
+	CenterWindowOnScreen(hWnd, GetForegroundWindow());
 	ShowWindow(hWnd, SW_SHOW);
 	UpdateWindow(hWnd);
 
@@ -4520,126 +4556,126 @@ static void OpenLinkUrl()
 	nfo.cbSize = sizeof(SHELLEXECUTEINFOA);
 	nfo.lpVerb = "open";
 	nfo.lpFile = APP_URL;
-	nfo.fMask  = SEE_MASK_ASYNCOK;
-	nfo.nShow  = SW_SHOWNORMAL;
+	nfo.fMask = SEE_MASK_ASYNCOK;
+	nfo.nShow = SW_SHOWNORMAL;
 	ShellExecuteExA(&nfo);
 }
 
 static LRESULT CALLBACK HypLinkSubclass(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam, UINT_PTR uIdSubclass, DWORD_PTR dwRefData)
 {
-	switch(uMsg)
+	switch (uMsg)
 	{
-		case WM_NCDESTROY:
+	case WM_NCDESTROY:
 		RemoveWindowSubclass(hWnd, HypLinkSubclass, uIdSubclass);
 		break;
 
-		case WM_NCHITTEST:
+	case WM_NCHITTEST:
 		return HTCLIENT;
 		break;
 
-		// Switch font when use hovers over us
-		case WM_MOUSEMOVE:
+	// Switch font when use hovers over us
+	case WM_MOUSEMOVE:
+	{
+		if (GetCapture() != hWnd)
 		{
-			if(GetCapture() != hWnd)
-			{
-				SendMessage(hWnd, WM_SETFONT, (WPARAM) undlineFont, FALSE);
-				//UpdateWinDatForegroundColor(hWnd, pcHyperlink->m_HighlightColor);
-				InvalidateRect(hWnd, NULL, FALSE);
-				SetCapture(hWnd);
-			}
-			else
-			{
-				RECT rect;
-				GetWindowRect(hWnd, &rect);
-				POINT pt = { LOWORD(lParam), HIWORD(lParam)};
-				ClientToScreen(hWnd, &pt);
+			SendMessage(hWnd, WM_SETFONT, (WPARAM)undlineFont, FALSE);
+			// UpdateWinDatForegroundColor(hWnd, pcHyperlink->m_HighlightColor);
+			InvalidateRect(hWnd, NULL, FALSE);
+			SetCapture(hWnd);
+		}
+		else
+		{
+			RECT rect;
+			GetWindowRect(hWnd, &rect);
+			POINT pt = {LOWORD(lParam), HIWORD(lParam)};
+			ClientToScreen(hWnd, &pt);
 
-				if(!PtInRect(&rect, pt))
-				{
-					SendMessage(hWnd, WM_SETFONT, (WPARAM) tweakedFont, FALSE);
-					//UpdateWinDatForegroundColor(hWnd, pcHyperlink->m_CurrentColor);
-					InvalidateRect(hWnd, NULL, FALSE);
-					ReleaseCapture();
-				}
+			if (!PtInRect(&rect, pt))
+			{
+				SendMessage(hWnd, WM_SETFONT, (WPARAM)tweakedFont, FALSE);
+				// UpdateWinDatForegroundColor(hWnd, pcHyperlink->m_CurrentColor);
+				InvalidateRect(hWnd, NULL, FALSE);
+				ReleaseCapture();
 			}
 		}
-		break;
+	}
+	break;
 
-		// Finger point cursor when over the control
-		case WM_SETCURSOR:
-		if(mouseOverCursor)
+	// Finger point cursor when over the control
+	case WM_SETCURSOR:
+		if (mouseOverCursor)
 		{
 			SetCursor(mouseOverCursor);
 			return 1;
 		}
 		break;
 
-		case WM_LBUTTONDOWN:
-		{
-			SetFocus(hWnd);
-			SetCapture(hWnd);
-			isClicking = TRUE;
-		}
-		break;
+	case WM_LBUTTONDOWN:
+	{
+		SetFocus(hWnd);
+		SetCapture(hWnd);
+		isClicking = TRUE;
+	}
+	break;
 
-		case WM_LBUTTONUP:
-		{
-			ReleaseCapture();
+	case WM_LBUTTONUP:
+	{
+		ReleaseCapture();
 
-			if(isClicking)
+		if (isClicking)
+		{
+			isClicking = FALSE;
+			POINT pt;
+			pt.x = (short)LOWORD(lParam);
+			pt.y = (short)HIWORD(lParam);
+			ClientToScreen(hWnd, &pt);
+			RECT rc;
+			GetWindowRect(hWnd, &rc);
+
+			if (PtInRect(&rc, pt))
 			{
-				isClicking = FALSE;
-				POINT pt;
-				pt.x = (short) LOWORD(lParam);
-				pt.y = (short) HIWORD(lParam);
-				ClientToScreen(hWnd, &pt);
-				RECT rc;
-				GetWindowRect(hWnd, &rc);
-
-				if(PtInRect(&rc,pt))
+				if (!isVisited)
 				{
-					if(!isVisited)
-					{
-						isVisited = TRUE;
-						//UpdateWinDatForegroundColor(hWnd, pcHyperlink->m_CurrentColor = pcHyperlink->m_VisitedColor);
-						urlColor = VISITED_COLOR;
-						InvalidateRect(hWnd, NULL, TRUE);
-					}
-
-					OpenLinkUrl();
+					isVisited = TRUE;
+					// UpdateWinDatForegroundColor(hWnd, pcHyperlink->m_CurrentColor = pcHyperlink->m_VisitedColor);
+					urlColor = VISITED_COLOR;
+					InvalidateRect(hWnd, NULL, TRUE);
 				}
+
+				OpenLinkUrl();
 			}
 		}
-		break;
+	}
+	break;
 
-		case WM_SETFOCUS:
-		{
-			InvalidateRect(hWnd, NULL, TRUE);
-			UpdateWindow(hWnd);
-		}
-		break;
+	case WM_SETFOCUS:
+	{
+		InvalidateRect(hWnd, NULL, TRUE);
+		UpdateWindow(hWnd);
+	}
+	break;
 
-		case WM_KILLFOCUS:
-		{
-			SendMessage(hWnd, WM_SETFONT, (WPARAM) tweakedFont, FALSE);
-			//UpdateWinDatForegroundColor(hWnd, pcHyperlink->m_CurrentColor);
-			InvalidateRect(hWnd, NULL, TRUE);
-			UpdateWindow(hWnd);
-		}
-		break;
+	case WM_KILLFOCUS:
+	{
+		SendMessage(hWnd, WM_SETFONT, (WPARAM)tweakedFont, FALSE);
+		// UpdateWinDatForegroundColor(hWnd, pcHyperlink->m_CurrentColor);
+		InvalidateRect(hWnd, NULL, TRUE);
+		UpdateWindow(hWnd);
+	}
+	break;
 
-		case WM_GETDLGCODE:
+	case WM_GETDLGCODE:
 		return DLGC_WANTCHARS;
 		break;
 
-		// Space key activate?
-		case WM_KEYDOWN:
-		if(wParam == VK_SPACE)
+	// Space key activate?
+	case WM_KEYDOWN:
+		if (wParam == VK_SPACE)
 		{
-			if(!isVisited)
+			if (!isVisited)
 			{
 				isVisited = TRUE;
-				//UpdateWinDatForegroundColor(hWnd, pcHyperlink->m_CurrentColor = pcHyperlink->m_VisitedColor);
+				// UpdateWinDatForegroundColor(hWnd, pcHyperlink->m_CurrentColor = pcHyperlink->m_VisitedColor);
 				urlColor = VISITED_COLOR;
 				InvalidateRect(hWnd, NULL, TRUE);
 			}
@@ -4649,8 +4685,8 @@ static LRESULT CALLBACK HypLinkSubclass(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
 		}
 		break;
 
-		case WM_KEYUP:
-		if(wParam == VK_SPACE)
+	case WM_KEYUP:
+		if (wParam == VK_SPACE)
 			return 0;
 		break;
 	};
@@ -4660,7 +4696,6 @@ static LRESULT CALLBACK HypLinkSubclass(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
 
 // ----------------------------------------------------------------------------
 
-
 // Our dialog Window message handler
 /**
  * Build GRPICONDIR blob and populate RT_ICON resources for one ICO file blob.
@@ -4668,17 +4703,17 @@ static LRESULT CALLBACK HypLinkSubclass(HWND hWnd, UINT uMsg, WPARAM wParam, LPA
  * nextIconId is incremented for each image entry consumed.
  */
 static UINT PackOneIcoGroup(HANDLE hUpdate, WORD groupId,
-	const std::vector<BYTE>& icoData, WORD& nextIconId, std::vector<BYTE>& groupData)
+							const std::vector<BYTE> &icoData, WORD &nextIconId, std::vector<BYTE> &groupData)
 {
 	groupData.clear();
 	if (icoData.size() < 6)
 		return 0;
 
-	WORD idType  = *reinterpret_cast<const WORD*>(&icoData[2]);
+	WORD idType = *reinterpret_cast<const WORD *>(&icoData[2]);
 	if (idType != 1)
 		return 0;
 
-	WORD idCount = *reinterpret_cast<const WORD*>(&icoData[4]);
+	WORD idCount = *reinterpret_cast<const WORD *>(&icoData[4]);
 	if ((idCount == 0) || (icoData.size() < (size_t)(6 + (size_t)idCount * 16)))
 		return 0;
 
@@ -4687,17 +4722,17 @@ static UINT PackOneIcoGroup(HANDLE hUpdate, WORD groupId,
 
 	for (WORD i = 0; i < idCount; i++)
 	{
-		size_t off         = 6 + (size_t)i * 16;
-		DWORD dwBytesInRes  = *reinterpret_cast<const DWORD*>(&icoData[off + 8]);
-		DWORD dwImageOffset = *reinterpret_cast<const DWORD*>(&icoData[off + 12]);
+		size_t off = 6 + (size_t)i * 16;
+		DWORD dwBytesInRes = *reinterpret_cast<const DWORD *>(&icoData[off + 8]);
+		DWORD dwImageOffset = *reinterpret_cast<const DWORD *>(&icoData[off + 12]);
 
 		if (((size_t)dwImageOffset + (size_t)dwBytesInRes) > icoData.size())
 			continue;
 
 		WORD iconId = nextIconId++;
 		if (!UpdateResourceW(hUpdate, (LPCWSTR)RT_ICON, MAKEINTRESOURCEW(iconId),
-			MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
-			const_cast<BYTE*>(&icoData[dwImageOffset]), dwBytesInRes))
+							 MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+							 const_cast<BYTE *>(&icoData[dwImageOffset]), dwBytesInRes))
 		{
 			continue;
 		}
@@ -4708,10 +4743,10 @@ static UINT PackOneIcoGroup(HANDLE hUpdate, WORD groupId,
 		entry[1] = icoData[off + 1];
 		entry[2] = icoData[off + 2];
 		entry[3] = icoData[off + 3];
-		memcpy(entry + 4,  &icoData[off + 4], 2); // wPlanes
-		memcpy(entry + 6,  &icoData[off + 6], 2); // wBitCount
-		memcpy(entry + 8,  &dwBytesInRes,     4); // dwBytesInRes
-		memcpy(entry + 12, &iconId,           2); // nId
+		memcpy(entry + 4, &icoData[off + 4], 2); // wPlanes
+		memcpy(entry + 6, &icoData[off + 6], 2); // wBitCount
+		memcpy(entry + 8, &dwBytesInRes, 4);	 // dwBytesInRes
+		memcpy(entry + 12, &iconId, 2);			 // nId
 		grpEntries.insert(grpEntries.end(), entry, entry + 14);
 		added++;
 	}
@@ -4722,22 +4757,21 @@ static UINT PackOneIcoGroup(HANDLE hUpdate, WORD groupId,
 	// GRPICONDIR header: WORD reserved=0, WORD type=1, WORD count
 	groupData.resize(6 + grpEntries.size());
 	WORD zero = 0, one = 1, count = (WORD)added;
-	memcpy(&groupData[0], &zero,  2);
-	memcpy(&groupData[2], &one,   2);
+	memcpy(&groupData[0], &zero, 2);
+	memcpy(&groupData[2], &one, 2);
 	memcpy(&groupData[4], &count, 2);
 	memcpy(&groupData[6], grpEntries.data(), grpEntries.size());
 	return added;
 }
 
-
 /**
  * Read a file from disk into a byte vector.
  */
-static BOOL ReadFileIntoVector(LPCWSTR filePath, std::vector<BYTE>& data)
+static BOOL ReadFileIntoVector(LPCWSTR filePath, std::vector<BYTE> &data)
 {
 	data.clear();
 	HANDLE hFile = CreateFileW(filePath, GENERIC_READ, FILE_SHARE_READ, NULL,
-		OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+							   OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE)
 		return FALSE;
 
@@ -4755,12 +4789,11 @@ static BOOL ReadFileIntoVector(LPCWSTR filePath, std::vector<BYTE>& data)
 	return ok;
 }
 
-
 /**
  * Fit BGRA pixels of any dimension into a transparent 256x256 square canvas
  * using proportional scaling (letterbox).
  */
-static std::vector<BYTE> LetterboxTo256(const std::vector<BYTE>& pixels, UINT srcW, UINT srcH)
+static std::vector<BYTE> LetterboxTo256(const std::vector<BYTE> &pixels, UINT srcW, UINT srcH)
 {
 	std::vector<BYTE> canvas(256 * 256 * 4, 0);
 	if ((srcW == 0) || (srcH == 0))
@@ -4768,33 +4801,39 @@ static std::vector<BYTE> LetterboxTo256(const std::vector<BYTE>& pixels, UINT sr
 
 	double scaleX = 256.0 / (double)srcW;
 	double scaleY = 256.0 / (double)srcH;
-	double scale  = (scaleX < scaleY) ? scaleX : scaleY;
-	UINT drawW    = (UINT)((double)srcW * scale + 0.5);
-	UINT drawH    = (UINT)((double)srcH * scale + 0.5);
-	if (drawW > 256) drawW = 256;
-	if (drawH > 256) drawH = 256;
+	double scale = (scaleX < scaleY) ? scaleX : scaleY;
+	UINT drawW = (UINT)((double)srcW * scale + 0.5);
+	UINT drawH = (UINT)((double)srcH * scale + 0.5);
+	if (drawW > 256)
+		drawW = 256;
+	if (drawH > 256)
+		drawH = 256;
 	UINT offX = (256 - drawW) / 2;
 	UINT offY = (256 - drawH) / 2;
 
 	for (UINT y = 0; y < drawH; y++)
 	{
 		UINT sy = (UINT)((double)y / scale);
-		if (sy >= srcH) sy = srcH - 1;
+		if (sy >= srcH)
+			sy = srcH - 1;
 		for (UINT x = 0; x < drawW; x++)
 		{
 			UINT sx = (UINT)((double)x / scale);
-			if (sx >= srcW) sx = srcW - 1;
-			const BYTE* src = &pixels[((size_t)sy * srcW + sx) * 4];
-			BYTE* dst = &canvas[((size_t)(offY + y) * 256 + (offX + x)) * 4];
-			dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2]; dst[3] = src[3];
+			if (sx >= srcW)
+				sx = srcW - 1;
+			const BYTE *src = &pixels[((size_t)sy * srcW + sx) * 4];
+			BYTE *dst = &canvas[((size_t)(offY + y) * 256 + (offX + x)) * 4];
+			dst[0] = src[0];
+			dst[1] = src[1];
+			dst[2] = src[2];
+			dst[3] = src[3];
 		}
 	}
 	return canvas;
 }
 
-
 /** Build the default DLL file name from the parent folder of the selected items. */
-static std::wstring BuildDefaultPackageDllName(const std::vector<std::wstring>& selectedPaths)
+static std::wstring BuildDefaultPackageDllName(const std::vector<std::wstring> &selectedPaths)
 {
 	if (selectedPaths.empty())
 		return L"PackagedIcons.dll";
@@ -4812,13 +4851,12 @@ static std::wstring BuildDefaultPackageDllName(const std::vector<std::wstring>& 
 	return folderName + L".dll";
 }
 
-
 /**
  * Ask the user for a DLL file name and normalize it to a safe *.dll name.
  * Returns FALSE when the user cancels.
  */
-static BOOL PromptPackageDllName(HWND hWnd, const std::wstring& initialDir,
-	const std::wstring& defaultFileName, std::wstring& outFileName)
+static BOOL PromptPackageDllName(HWND hWnd, const std::wstring &initialDir,
+								 const std::wstring &defaultFileName, std::wstring &outFileName)
 {
 	outFileName.clear();
 
@@ -4855,7 +4893,6 @@ static BOOL PromptPackageDllName(HWND hWnd, const std::wstring& initialDir,
 	return TRUE;
 }
 
-
 /**
  * Get path to the custom icon names file in the icons folder.
  */
@@ -4871,7 +4908,7 @@ static std::wstring GetCustomIconNamesPath()
 		WCHAR exeDir[MAX_PATH] = {};
 		if (GetModuleFileNameW(NULL, exeDir, _countof(exeDir)))
 		{
-			WCHAR* lastSlash = wcsrchr(exeDir, L'\\');
+			WCHAR *lastSlash = wcsrchr(exeDir, L'\\');
 			if (lastSlash)
 				*lastSlash = L'\0';
 		}
@@ -4879,7 +4916,6 @@ static std::wstring GetCustomIconNamesPath()
 	}
 	return iconsDir + L"\\.custom-icon-names";
 }
-
 
 /** Load one RT_STRING block into 16 UTF-16 strings. */
 static BOOL LoadStringTableBlock(HMODULE hModule, UINT blockId, std::wstring entries[16])
@@ -4890,7 +4926,7 @@ static BOOL LoadStringTableBlock(HMODULE hModule, UINT blockId, std::wstring ent
 	if (!hModule)
 		return FALSE;
 
-	HRSRC hRes = FindResourceW(hModule, MAKEINTRESOURCEW(blockId), (LPCWSTR) RT_STRING);
+	HRSRC hRes = FindResourceW(hModule, MAKEINTRESOURCEW(blockId), (LPCWSTR)RT_STRING);
 	if (!hRes)
 		return FALSE;
 
@@ -4898,43 +4934,41 @@ static BOOL LoadStringTableBlock(HMODULE hModule, UINT blockId, std::wstring ent
 	if (!hLoaded)
 		return FALSE;
 
-	const WORD* src = (const WORD*) LockResource(hLoaded);
+	const WORD *src = (const WORD *)LockResource(hLoaded);
 	DWORD bytes = SizeofResource(hModule, hRes);
 	if (!src || (bytes < sizeof(WORD)))
 		return FALSE;
 
-	const WORD* end = src + (bytes / sizeof(WORD));
+	const WORD *end = src + (bytes / sizeof(WORD));
 	for (int i = 0; (i < 16) && (src < end); i++)
 	{
 		WORD len = *src++;
-		if (((size_t) (end - src)) < len)
+		if (((size_t)(end - src)) < len)
 			return FALSE;
 
 		if (len > 0)
-			entries[i].assign((const WCHAR*) src, (size_t) len);
+			entries[i].assign((const WCHAR *)src, (size_t)len);
 		src += len;
 	}
 
 	return TRUE;
 }
 
-
 /** Serialize 16 UTF-16 strings into one RT_STRING block payload. */
-static void BuildStringTableBlockData(const std::wstring entries[16], std::vector<BYTE>& outData)
+static void BuildStringTableBlockData(const std::wstring entries[16], std::vector<BYTE> &outData)
 {
 	outData.clear();
 
 	for (int i = 0; i < 16; i++)
 	{
-		WORD len = (WORD) ((entries[i].size() < 0xFFFFu) ? entries[i].size() : 0xFFFFu);
+		WORD len = (WORD)((entries[i].size() < 0xFFFFu) ? entries[i].size() : 0xFFFFu);
 		size_t oldSize = outData.size();
-		outData.resize(oldSize + sizeof(WORD) + ((size_t) len * sizeof(WCHAR)));
+		outData.resize(oldSize + sizeof(WORD) + ((size_t)len * sizeof(WCHAR)));
 		memcpy(outData.data() + oldSize, &len, sizeof(WORD));
 		if (len > 0)
-			memcpy(outData.data() + oldSize + sizeof(WORD), entries[i].data(), (size_t) len * sizeof(WCHAR));
+			memcpy(outData.data() + oldSize + sizeof(WORD), entries[i].data(), (size_t)len * sizeof(WCHAR));
 	}
 }
-
 
 /** Collect numeric resource IDs for one resource type. */
 static BOOL CALLBACK EnumNumericResourceNameProc(HMODULE hModule, LPCWSTR type, LPWSTR name, LONG_PTR lParam)
@@ -4945,14 +4979,13 @@ static BOOL CALLBACK EnumNumericResourceNameProc(HMODULE hModule, LPCWSTR type, 
 	if (!lParam || !IS_INTRESOURCE(name))
 		return TRUE;
 
-	std::vector<WORD>* ids = reinterpret_cast<std::vector<WORD>*>(lParam);
-	ids->push_back((WORD) (ULONG_PTR) name);
+	std::vector<WORD> *ids = reinterpret_cast<std::vector<WORD> *>(lParam);
+	ids->push_back((WORD)(ULONG_PTR)name);
 	return TRUE;
 }
 
-
 /** Load one resource blob into a byte vector. */
-static BOOL LoadResourceBytes(HMODULE hModule, LPCWSTR type, WORD resourceId, std::vector<BYTE>& data)
+static BOOL LoadResourceBytes(HMODULE hModule, LPCWSTR type, WORD resourceId, std::vector<BYTE> &data)
 {
 	data.clear();
 
@@ -4965,7 +4998,7 @@ static BOOL LoadResourceBytes(HMODULE hModule, LPCWSTR type, WORD resourceId, st
 		return FALSE;
 
 	DWORD bytes = SizeofResource(hModule, hRes);
-	const BYTE* src = (const BYTE*) LockResource(hLoaded);
+	const BYTE *src = (const BYTE *)LockResource(hLoaded);
 	if (!src || (bytes == 0))
 		return FALSE;
 
@@ -4973,22 +5006,21 @@ static BOOL LoadResourceBytes(HMODULE hModule, LPCWSTR type, WORD resourceId, st
 	return TRUE;
 }
 
-
 /** Rebuild an ICO file blob from one RT_GROUP_ICON resource inside a DLL. */
-static BOOL BuildIcoDataFromGroupResource(HMODULE hModule, WORD groupId, std::vector<BYTE>& icoData)
+static BOOL BuildIcoDataFromGroupResource(HMODULE hModule, WORD groupId, std::vector<BYTE> &icoData)
 {
 	icoData.clear();
 
 	std::vector<BYTE> groupBytes;
-	if (!LoadResourceBytes(hModule, (LPCWSTR) RT_GROUP_ICON, groupId, groupBytes))
+	if (!LoadResourceBytes(hModule, (LPCWSTR)RT_GROUP_ICON, groupId, groupBytes))
 		return FALSE;
 
 	if (groupBytes.size() < 6)
 		return FALSE;
 
-	WORD idType = *reinterpret_cast<const WORD*>(&groupBytes[2]);
-	WORD idCount = *reinterpret_cast<const WORD*>(&groupBytes[4]);
-	if ((idType != 1) || (idCount == 0) || (groupBytes.size() < (size_t) (6 + ((size_t) idCount * 14))))
+	WORD idType = *reinterpret_cast<const WORD *>(&groupBytes[2]);
+	WORD idCount = *reinterpret_cast<const WORD *>(&groupBytes[4]);
+	if ((idType != 1) || (idCount == 0) || (groupBytes.size() < (size_t)(6 + ((size_t)idCount * 14))))
 		return FALSE;
 
 	std::vector<std::vector<BYTE>> imageBlobs;
@@ -4997,12 +5029,12 @@ static BOOL BuildIcoDataFromGroupResource(HMODULE hModule, WORD groupId, std::ve
 
 	for (WORD i = 0; i < idCount; i++)
 	{
-		size_t off = 6 + ((size_t) i * 14);
-		DWORD bytesInRes = *reinterpret_cast<const DWORD*>(&groupBytes[off + 8]);
-		WORD iconId = *reinterpret_cast<const WORD*>(&groupBytes[off + 12]);
+		size_t off = 6 + ((size_t)i * 14);
+		DWORD bytesInRes = *reinterpret_cast<const DWORD *>(&groupBytes[off + 8]);
+		WORD iconId = *reinterpret_cast<const WORD *>(&groupBytes[off + 12]);
 
 		std::vector<BYTE> imageBytes;
-		if (!LoadResourceBytes(hModule, (LPCWSTR) RT_ICON, iconId, imageBytes))
+		if (!LoadResourceBytes(hModule, (LPCWSTR)RT_ICON, iconId, imageBytes))
 			return FALSE;
 
 		if ((bytesInRes == 0) || (imageBytes.size() < bytesInRes))
@@ -5013,21 +5045,21 @@ static BOOL BuildIcoDataFromGroupResource(HMODULE hModule, WORD groupId, std::ve
 		imageBlobs.push_back(imageBytes);
 	}
 
-	icoData.resize(6 + ((size_t) idCount * 16) + imageDataSize);
+	icoData.resize(6 + ((size_t)idCount * 16) + imageDataSize);
 	WORD zero = 0;
 	WORD one = 1;
 	memcpy(icoData.data() + 0, &zero, 2);
 	memcpy(icoData.data() + 2, &one, 2);
 	memcpy(icoData.data() + 4, &idCount, 2);
 
-	DWORD imageOffset = (DWORD) (6 + ((size_t) idCount * 16));
-	BYTE* entryDst = icoData.data() + 6;
-	BYTE* imageDst = icoData.data() + imageOffset;
+	DWORD imageOffset = (DWORD)(6 + ((size_t)idCount * 16));
+	BYTE *entryDst = icoData.data() + 6;
+	BYTE *imageDst = icoData.data() + imageOffset;
 
 	for (WORD i = 0; i < idCount; i++)
 	{
-		size_t grpOff = 6 + ((size_t) i * 14);
-		DWORD bytesInRes = (DWORD) imageBlobs[i].size();
+		size_t grpOff = 6 + ((size_t)i * 14);
+		DWORD bytesInRes = (DWORD)imageBlobs[i].size();
 
 		entryDst[0] = groupBytes[grpOff + 0];
 		entryDst[1] = groupBytes[grpOff + 1];
@@ -5047,9 +5079,8 @@ static BOOL BuildIcoDataFromGroupResource(HMODULE hModule, WORD groupId, std::ve
 	return TRUE;
 }
 
-
 /** Update the display name string resource for one icon inside a custom DLL. */
-static BOOL RenameCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex, const std::wstring& newName)
+static BOOL RenameCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex, const std::wstring &newName)
 {
 	if (!dllPath || !dllPath[0])
 		return FALSE;
@@ -5081,16 +5112,15 @@ static BOOL RenameCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex, const s
 	if (!hUpdate)
 		return FALSE;
 
-	BOOL ok = UpdateResourceW(hUpdate, (LPCWSTR) RT_STRING, MAKEINTRESOURCEW(blockId),
-		MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
-		blockData.data(), (DWORD) blockData.size());
+	BOOL ok = UpdateResourceW(hUpdate, (LPCWSTR)RT_STRING, MAKEINTRESOURCEW(blockId),
+							  MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+							  blockData.data(), (DWORD)blockData.size());
 
 	if (!EndUpdateResourceW(hUpdate, ok ? FALSE : TRUE))
 		ok = FALSE;
 
 	return ok;
 }
-
 
 /** Delete one icon resource from a custom DLL and compact the remaining indexes. */
 static BOOL DeleteCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex)
@@ -5104,8 +5134,8 @@ static BOOL DeleteCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex)
 
 	std::vector<WORD> groupIds;
 	std::vector<WORD> iconIds;
-	EnumResourceNamesW(hDll, (LPCWSTR) RT_GROUP_ICON, EnumNumericResourceNameProc, (LONG_PTR) &groupIds);
-	EnumResourceNamesW(hDll, (LPCWSTR) RT_ICON, EnumNumericResourceNameProc, (LONG_PTR) &iconIds);
+	EnumResourceNamesW(hDll, (LPCWSTR)RT_GROUP_ICON, EnumNumericResourceNameProc, (LONG_PTR)&groupIds);
+	EnumResourceNamesW(hDll, (LPCWSTR)RT_ICON, EnumNumericResourceNameProc, (LONG_PTR)&iconIds);
 
 	std::sort(groupIds.begin(), groupIds.end());
 	groupIds.erase(std::unique(groupIds.begin(), groupIds.end()), groupIds.end());
@@ -5139,7 +5169,7 @@ static BOOL DeleteCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex)
 			return FALSE;
 		}
 
-		entry.name = LoadIconNameFromDll(dllPath, (UINT) ordinal);
+		entry.name = LoadIconNameFromDll(dllPath, (UINT)ordinal);
 		remainingIcons.push_back(entry);
 	}
 
@@ -5157,14 +5187,14 @@ static BOOL DeleteCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex)
 
 	for (size_t i = 0; ok && (i < groupIds.size()); i++)
 	{
-		ok = UpdateResourceW(hUpdate, (LPCWSTR) RT_GROUP_ICON, MAKEINTRESOURCEW(groupIds[i]),
-			MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), NULL, 0);
+		ok = UpdateResourceW(hUpdate, (LPCWSTR)RT_GROUP_ICON, MAKEINTRESOURCEW(groupIds[i]),
+							 MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), NULL, 0);
 	}
 
 	for (size_t i = 0; ok && (i < iconIds.size()); i++)
 	{
-		ok = UpdateResourceW(hUpdate, (LPCWSTR) RT_ICON, MAKEINTRESOURCEW(iconIds[i]),
-			MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), NULL, 0);
+		ok = UpdateResourceW(hUpdate, (LPCWSTR)RT_ICON, MAKEINTRESOURCEW(iconIds[i]),
+							 MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), NULL, 0);
 	}
 
 	for (size_t i = 0; ok && (i < remainingIcons.size()); i++)
@@ -5177,16 +5207,16 @@ static BOOL DeleteCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex)
 			break;
 		}
 
-		ok = UpdateResourceW(hUpdate, (LPCWSTR) RT_GROUP_ICON, MAKEINTRESOURCEW(nextGroupId),
-			MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
-			groupData.data(), (DWORD) groupData.size());
+		ok = UpdateResourceW(hUpdate, (LPCWSTR)RT_GROUP_ICON, MAKEINTRESOURCEW(nextGroupId),
+							 MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+							 groupData.data(), (DWORD)groupData.size());
 		nextGroupId++;
 	}
 
 	if (ok && oldCount > 0)
 	{
 		UINT firstStringId = kCustomDllIconNameBaseId;
-		UINT lastStringId = kCustomDllIconNameBaseId + (UINT) oldCount - 1;
+		UINT lastStringId = kCustomDllIconNameBaseId + (UINT)oldCount - 1;
 		UINT firstBlockId = (firstStringId / 16) + 1;
 		UINT lastBlockId = (lastStringId / 16) + 1;
 
@@ -5203,7 +5233,7 @@ static BOOL DeleteCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex)
 
 			for (size_t i = 0; i < remainingIcons.size(); i++)
 			{
-				UINT stringId = kCustomDllIconNameBaseId + (UINT) i;
+				UINT stringId = kCustomDllIconNameBaseId + (UINT)i;
 				if (((stringId / 16) + 1) != blockId)
 					continue;
 
@@ -5212,9 +5242,9 @@ static BOOL DeleteCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex)
 
 			std::vector<BYTE> blockData;
 			BuildStringTableBlockData(entries, blockData);
-			ok = !blockData.empty() && UpdateResourceW(hUpdate, (LPCWSTR) RT_STRING, MAKEINTRESOURCEW(blockId),
-				MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
-				blockData.data(), (DWORD) blockData.size());
+			ok = !blockData.empty() && UpdateResourceW(hUpdate, (LPCWSTR)RT_STRING, MAKEINTRESOURCEW(blockId),
+													   MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+													   blockData.data(), (DWORD)blockData.size());
 		}
 	}
 
@@ -5225,9 +5255,8 @@ static BOOL DeleteCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex)
 	return ok;
 }
 
-
 /** Rename a custom imported ICO file and return its new path. */
-static BOOL RenameCustomIcoFile(const PickerItem& item, const std::wstring& requestedName, std::wstring& renamedPath)
+static BOOL RenameCustomIcoFile(const PickerItem &item, const std::wstring &requestedName, std::wstring &renamedPath)
 {
 	renamedPath.clear();
 	if (item.resourcePath.empty())
@@ -5262,9 +5291,8 @@ static BOOL RenameCustomIcoFile(const PickerItem& item, const std::wstring& requ
 	return FALSE;
 }
 
-
 /** Rename one custom picker item on disk/in resource and select it again after refresh. */
-static BOOL RenameCustomPickerItem(HWND hWnd, const PickerItem& item, const std::wstring& requestedName)
+static BOOL RenameCustomPickerItem(HWND hWnd, const PickerItem &item, const std::wstring &requestedName)
 {
 	if (!IsRenamableCustomPickerItem(item))
 		return FALSE;
@@ -5281,7 +5309,7 @@ static BOOL RenameCustomPickerItem(HWND hWnd, const PickerItem& item, const std:
 	}
 	else if (_wcsicmp(ext, L".dll") == 0)
 	{
-		if (!RenameCustomDllIconResource(item.resourcePath.c_str(), (UINT) item.resourceIndex, requestedName))
+		if (!RenameCustomDllIconResource(item.resourcePath.c_str(), (UINT)item.resourceIndex, requestedName))
 			return FALSE;
 	}
 	else
@@ -5299,7 +5327,6 @@ static BOOL RenameCustomPickerItem(HWND hWnd, const PickerItem& item, const std:
 	SelectPickerItemByResource(hWnd, renamedPath, (_wcsicmp(ext, L".dll") == 0) ? item.resourceIndex : -1);
 	return TRUE;
 }
-
 
 /**
  * Load an icon name from a String Resource in a DLL.
@@ -5324,7 +5351,6 @@ static std::wstring LoadIconNameFromDll(LPCWSTR dllPath, UINT iconIndex)
 	return std::wstring();
 }
 
-
 /**
  * Get the icon name to display: try String Resource first,
  * then fallback to "Icon NNN".
@@ -5341,7 +5367,6 @@ static std::wstring GetIconDisplayName(LPCWSTR dllPath, UINT iconIndex)
 	swprintf_s(fallback, _countof(fallback), L"Icon %03u", iconIndex);
 	return std::wstring(fallback);
 }
-
 
 /**
  * Check if a DLL path is in the custom icons folder.
@@ -5361,7 +5386,7 @@ static BOOL IsCustomIconDll(LPCWSTR dllPath)
 		WCHAR exeDir[MAX_PATH] = {};
 		if (GetModuleFileNameW(NULL, exeDir, _countof(exeDir)))
 		{
-			WCHAR* lastSlash = wcsrchr(exeDir, L'\\');
+			WCHAR *lastSlash = wcsrchr(exeDir, L'\\');
 			if (lastSlash)
 				*lastSlash = L'\0';
 		}
@@ -5377,7 +5402,6 @@ static BOOL IsCustomIconDll(LPCWSTR dllPath)
 	// Check if dll is in the icons directory
 	return (_wcsnicmp(normalizedDll, normalizedIconsDir, wcslen(normalizedIconsDir)) == 0);
 }
-
 
 /**
  * Package selected .ico/.png/.jpg files into a single DLL that exposes each
@@ -5401,18 +5425,18 @@ static void PackageIconsIntoDll(HWND hWnd)
 	std::vector<WCHAR> fileBuffer(32768, L'\0');
 	OPENFILENAMEW ofn = {};
 	ofn.lStructSize = sizeof(ofn);
-	ofn.hwndOwner   = hWnd;
+	ofn.hwndOwner = hWnd;
 	ofn.lpstrFilter = kFilter;
-	ofn.lpstrFile   = fileBuffer.data();
-	ofn.nMaxFile    = (DWORD)fileBuffer.size();
-	ofn.Flags       = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_ALLOWMULTISELECT;
-	ofn.lpstrTitle  = L"Select icons to package into DLL";
+	ofn.lpstrFile = fileBuffer.data();
+	ofn.nMaxFile = (DWORD)fileBuffer.size();
+	ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_ALLOWMULTISELECT;
+	ofn.lpstrTitle = L"Select icons to package into DLL";
 	if (!GetOpenFileNameW(&ofn))
 		return;
 
 	// Parse multi-select results (directory + file names, or single full path)
 	std::vector<std::wstring> selectedPaths;
-	const WCHAR* ptr = fileBuffer.data();
+	const WCHAR *ptr = fileBuffer.data();
 	std::wstring dirOrSingle = ptr;
 	ptr += dirOrSingle.size() + 1;
 
@@ -5444,7 +5468,7 @@ static void PackageIconsIntoDll(HWND hWnd)
 		WCHAR exeDir[MAX_PATH] = {};
 		if (GetModuleFileNameW(NULL, exeDir, _countof(exeDir)))
 		{
-			WCHAR* lastSlash = wcsrchr(exeDir, L'\\');
+			WCHAR *lastSlash = wcsrchr(exeDir, L'\\');
 			if (lastSlash)
 				*lastSlash = L'\0';
 		}
@@ -5491,16 +5515,16 @@ static void PackageIconsIntoDll(HWND hWnd)
 		return;
 	}
 
-	WORD nextIconId   = 1;
-	WORD nextGroupId  = 1;
+	WORD nextIconId = 1;
+	WORD nextGroupId = 1;
 	UINT successCount = 0;
-	UINT failedCount  = 0;
+	UINT failedCount = 0;
 	std::vector<std::wstring> failedNames;
 	std::vector<PendingIconName> pendingNames;
 
 	for (size_t i = 0; i < selectedPaths.size(); i++)
 	{
-		const std::wstring& srcPath = selectedPaths[i];
+		const std::wstring &srcPath = selectedPaths[i];
 		LPCWSTR ext = PathFindExtensionW(srcPath.c_str());
 		std::vector<BYTE> icoData;
 
@@ -5568,8 +5592,8 @@ static void PackageIconsIntoDll(HWND hWnd)
 		}
 
 		if (!UpdateResourceW(hUpdate, (LPCWSTR)RT_GROUP_ICON, MAKEINTRESOURCEW(nextGroupId),
-			MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
-			groupData.data(), (DWORD)groupData.size()))
+							 MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+							 groupData.data(), (DWORD)groupData.size()))
 		{
 			failedCount++;
 			failedNames.push_back(PathFindFileNameW(srcPath.c_str()));
@@ -5619,9 +5643,9 @@ static void PackageIconsIntoDll(HWND hWnd)
 		BuildStringTableBlockData(entries, blockData);
 		if (!blockData.empty())
 		{
-			if (!UpdateResourceW(hUpdate, (LPCWSTR) RT_STRING, MAKEINTRESOURCEW(blockId),
-				MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
-				blockData.data(), (DWORD) blockData.size()))
+			if (!UpdateResourceW(hUpdate, (LPCWSTR)RT_STRING, MAKEINTRESOURCEW(blockId),
+								 MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+								 blockData.data(), (DWORD)blockData.size()))
 			{
 				// String resource update failed, but continue (icon still works with fallback name)
 			}
@@ -5653,7 +5677,6 @@ static void PackageIconsIntoDll(HWND hWnd)
 	MessageBoxA(hWnd, msg, "Package Icons:", MB_OK | (failedCount ? MB_ICONWARNING : MB_ICONASTERISK));
 }
 
-
 /** Thread payload used while running Install() with UI progress. */
 struct InstallProgressContext
 {
@@ -5666,11 +5689,10 @@ struct InstallProgressContext
 #define INSTALL_PROGRESS_TIMER_ID 1
 #define WM_INSTALL_PROGRESS_FOUND_LIBRARY (WM_APP + 140)
 
-
 /** Worker thread: execute Install() and signal completion event. */
 static DWORD WINAPI InstallWithProgressThreadProc(LPVOID parameter)
 {
-	InstallProgressContext* ctx = (InstallProgressContext*) parameter;
+	InstallProgressContext *ctx = (InstallProgressContext *)parameter;
 	if (ctx && ctx->cacheOnlyMode)
 		RebuildSystemIconCacheOnly();
 	else
@@ -5680,24 +5702,22 @@ static DWORD WINAPI InstallWithProgressThreadProc(LPVOID parameter)
 	return 0;
 }
 
-
 /** Relay installer discovery progress from worker thread to progress window UI thread. */
-static void InstallDiscoveryProgressRelayCallback(LPCWSTR foundLibraryPath, void* userData)
+static void InstallDiscoveryProgressRelayCallback(LPCWSTR foundLibraryPath, void *userData)
 {
-	HWND hProgressWnd = (HWND) userData;
+	HWND hProgressWnd = (HWND)userData;
 	if (!hProgressWnd || !IsWindow(hProgressWnd) || !foundLibraryPath || !foundLibraryPath[0])
 		return;
 
 	size_t cch = wcslen(foundLibraryPath) + 1;
-	WCHAR* copy = (WCHAR*) LocalAlloc(LMEM_FIXED, cch * sizeof(WCHAR));
+	WCHAR *copy = (WCHAR *)LocalAlloc(LMEM_FIXED, cch * sizeof(WCHAR));
 	if (!copy)
 		return;
 
 	wcscpy_s(copy, cch, foundLibraryPath);
-	if (!PostMessageW(hProgressWnd, WM_INSTALL_PROGRESS_FOUND_LIBRARY, 0, (LPARAM) copy))
+	if (!PostMessageW(hProgressWnd, WM_INSTALL_PROGRESS_FOUND_LIBRARY, 0, (LPARAM)copy))
 		LocalFree(copy);
 }
-
 
 /** Keep a borderless progress window painted with dialog-like colors. */
 static LRESULT CALLBACK InstallProgressWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -5706,88 +5726,156 @@ static LRESULT CALLBACK InstallProgressWndProc(HWND hWnd, UINT uMsg, WPARAM wPar
 
 	switch (uMsg)
 	{
-		case WM_TIMER:
-			if (wParam == INSTALL_PROGRESS_TIMER_ID)
-			{
-				HWND hProgressBar = GetDlgItem(hWnd, IDC_INSTALL_PROGRESS_BAR);
-				if (hProgressBar)
-				{
-					int pos = (int) SendMessageW(hProgressBar, PBM_GETPOS, 0, 0);
-					int nextPos = (pos + 1) % 101;
-					SendMessageW(hProgressBar, PBM_SETPOS, nextPos, 0);
-				}
-				return 0;
-			}
-			break;
-
-		case WM_INSTALL_PROGRESS_FOUND_LIBRARY:
+	case WM_TIMER:
+		if (wParam == INSTALL_PROGRESS_TIMER_ID)
 		{
-			WCHAR* fullPath = (WCHAR*) lParam;
-			if (!fullPath)
-				return 0;
-
-			LPCWSTR fileName = PathFindFileNameW(fullPath);
-			if (!fileName || !fileName[0])
-				fileName = fullPath;
-
-			WCHAR label[384] = {};
-			swprintf_s(label, _countof(label), L"Found: %s", fileName);
-			SetDlgItemTextW(hWnd, IDC_INSTALL_PROGRESS_FOUND_ITEM, label);
-
 			HWND hProgressBar = GetDlgItem(hWnd, IDC_INSTALL_PROGRESS_BAR);
 			if (hProgressBar)
 			{
-				int pos = (int) SendMessageW(hProgressBar, PBM_GETPOS, 0, 0);
-				int nextPos = (pos + 2) % 101;
+				int pos = (int)SendMessageW(hProgressBar, PBM_GETPOS, 0, 0);
+				int nextPos = (pos + 1) % 101;
 				SendMessageW(hProgressBar, PBM_SETPOS, nextPos, 0);
 			}
-
-			LocalFree(fullPath);
 			return 0;
 		}
+		break;
 
-		case WM_ERASEBKGND:
+	case WM_INSTALL_PROGRESS_FOUND_LIBRARY:
+	{
+		WCHAR *fullPath = (WCHAR *)lParam;
+		if (!fullPath)
+			return 0;
+
+		LPCWSTR fileName = PathFindFileNameW(fullPath);
+		if (!fileName || !fileName[0])
+			fileName = fullPath;
+
+		WCHAR label[384] = {};
+		swprintf_s(label, _countof(label), L"Found: %s", fileName);
+		SetDlgItemTextW(hWnd, IDC_INSTALL_PROGRESS_FOUND_ITEM, label);
+
+		HWND hProgressBar = GetDlgItem(hWnd, IDC_INSTALL_PROGRESS_BAR);
+		if (hProgressBar)
 		{
-			RECT rc = {};
-			GetClientRect(hWnd, &rc);
-			HBRUSH brush = gDialogBackgroundBrush ? gDialogBackgroundBrush : GetSysColorBrush(COLOR_WINDOW);
-			FillRect((HDC) wParam, &rc, brush);
-			return 1;
+			int pos = (int)SendMessageW(hProgressBar, PBM_GETPOS, 0, 0);
+			int nextPos = (pos + 2) % 101;
+			SendMessageW(hProgressBar, PBM_SETPOS, nextPos, 0);
 		}
 
-		case WM_CTLCOLORSTATIC:
-		{
-			HDC hdc = (HDC) wParam;
-			SetTextColor(hdc, gDialogTextColor);
-			SetBkColor(hdc, gDialogBackgroundColor);
-			return (LRESULT) (gDialogBackgroundBrush ? gDialogBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
-		}
+		LocalFree(fullPath);
+		return 0;
+	}
 
-		case WM_DESTROY:
-			KillTimer(hWnd, INSTALL_PROGRESS_TIMER_ID);
-			break;
+	case WM_ERASEBKGND:
+	{
+		RECT rc = {};
+		GetClientRect(hWnd, &rc);
+		HBRUSH brush = gDialogBackgroundBrush ? gDialogBackgroundBrush : GetSysColorBrush(COLOR_WINDOW);
+		FillRect((HDC)wParam, &rc, brush);
+		return 1;
+	}
+
+	case WM_CTLCOLORSTATIC:
+	{
+		HDC hdc = (HDC)wParam;
+		SetTextColor(hdc, gDialogTextColor);
+		SetBkColor(hdc, gDialogBackgroundColor);
+		return (LRESULT)(gDialogBackgroundBrush ? gDialogBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+	}
+
+	case WM_DESTROY:
+		KillTimer(hWnd, INSTALL_PROGRESS_TIMER_ID);
+		break;
 	}
 
 	return DefWindowProcW(hWnd, uMsg, wParam, lParam);
 }
 
+/** Center a popup window relative to the owner dialog. */
+static RECT GetWorkAreaForReferenceWindow(HWND hReference)
+{
+	RECT workArea = {};
+	HMONITOR hMonitor = NULL;
+	if (hReference && IsWindow(hReference))
+		hMonitor = MonitorFromWindow(hReference, MONITOR_DEFAULTTONEAREST);
+
+	if (!hMonitor)
+	{
+		POINT cursorPos = {};
+		if (GetCursorPos(&cursorPos))
+			hMonitor = MonitorFromPoint(cursorPos, MONITOR_DEFAULTTONEAREST);
+	}
+
+	if (hMonitor)
+	{
+		MONITORINFO monitorInfo = {};
+		monitorInfo.cbSize = sizeof(monitorInfo);
+		if (GetMonitorInfoW(hMonitor, &monitorInfo))
+			return monitorInfo.rcWork;
+	}
+
+	SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
+	return workArea;
+}
+
+static void CenterWindowInRect(HWND hWnd, const RECT &targetRect, HWND hInsertAfter)
+{
+	if (!hWnd || !IsWindow(hWnd))
+		return;
+
+	RECT windowRc = {};
+	GetWindowRect(hWnd, &windowRc);
+
+	int windowW = windowRc.right - windowRc.left;
+	int windowH = windowRc.bottom - windowRc.top;
+	int x = targetRect.left + ((targetRect.right - targetRect.left - windowW) / 2);
+	int y = targetRect.top + ((targetRect.bottom - targetRect.top - windowH) / 2);
+
+	RECT workArea = GetWorkAreaForReferenceWindow(hWnd);
+	if (workArea.right > workArea.left && workArea.bottom > workArea.top)
+	{
+		int minX = workArea.left;
+		int minY = workArea.top;
+		int maxX = workArea.right - windowW;
+		int maxY = workArea.bottom - windowH;
+		x = max(minX, min(x, maxX));
+		y = max(minY, min(y, maxY));
+	}
+
+	SetWindowPos(hWnd, hInsertAfter, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+}
 
 /** Center a popup window relative to the owner dialog. */
 static void CenterPopupToOwner(HWND hPopup, HWND hOwner)
 {
+	if (!hOwner || !IsWindow(hOwner))
+	{
+		RECT workArea = GetWorkAreaForReferenceWindow(hPopup);
+		CenterWindowInRect(hPopup, workArea, HWND_TOPMOST);
+		return;
+	}
+
 	RECT ownerRc = {};
-	RECT popupRc = {};
 	GetWindowRect(hOwner, &ownerRc);
-	GetWindowRect(hPopup, &popupRc);
 
-	int popupW = popupRc.right - popupRc.left;
-	int popupH = popupRc.bottom - popupRc.top;
-	int x = ownerRc.left + ((ownerRc.right - ownerRc.left - popupW) / 2);
-	int y = ownerRc.top + ((ownerRc.bottom - ownerRc.top - popupH) / 2);
+	RECT workArea = GetWorkAreaForReferenceWindow(hOwner);
+	if (workArea.right > workArea.left && workArea.bottom > workArea.top)
+	{
+		ownerRc.left = max(ownerRc.left, workArea.left);
+		ownerRc.top = max(ownerRc.top, workArea.top);
+		ownerRc.right = min(ownerRc.right, workArea.right);
+		ownerRc.bottom = min(ownerRc.bottom, workArea.bottom);
+	}
 
-	SetWindowPos(hPopup, HWND_TOPMOST, x, y, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE);
+	CenterWindowInRect(hPopup, ownerRc, HWND_TOPMOST);
 }
 
+/** Center a top-level window on the active screen/work area. */
+static void CenterWindowOnScreen(HWND hWnd, HWND hReference)
+{
+	RECT workArea = GetWorkAreaForReferenceWindow(hReference ? hReference : hWnd);
+	CenterWindowInRect(hWnd, workArea, NULL);
+}
 
 /** Run Install() while displaying a borderless marquee progress window. */
 static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, BOOL cacheOnlyMode)
@@ -5802,10 +5890,10 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 	{
 		WNDCLASSW wc = {};
 		wc.lpfnWndProc = InstallProgressWndProc;
-		wc.hInstance = (HINSTANCE) GetModuleHandleW(NULL);
+		wc.hInstance = (HINSTANCE)GetModuleHandleW(NULL);
 		wc.lpszClassName = L"FoldrionInstallProgressWnd";
 		wc.hCursor = LoadCursor(NULL, IDC_WAIT);
-		wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+		wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 		progressWndClassAtom = RegisterClassW(&wc);
 	}
 
@@ -5820,7 +5908,7 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 		138,
 		hWnd,
 		NULL,
-		(HINSTANCE) GetModuleHandleW(NULL),
+		(HINSTANCE)GetModuleHandleW(NULL),
 		NULL);
 
 	if (!hProgressWnd)
@@ -5855,7 +5943,7 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 		364,
 		20,
 		hProgressWnd,
-		(HMENU) IDC_INSTALL_PROGRESS_BAR,
+		(HMENU)IDC_INSTALL_PROGRESS_BAR,
 		NULL,
 		NULL);
 
@@ -5875,7 +5963,7 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 		384,
 		24,
 		hProgressWnd,
-		(HMENU) IDC_INSTALL_PROGRESS_FOUND_ITEM,
+		(HMENU)IDC_INSTALL_PROGRESS_FOUND_ITEM,
 		NULL,
 		NULL);
 
@@ -5884,13 +5972,15 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 	UpdateWindow(hProgressWnd);
 	SetTimer(hProgressWnd, INSTALL_PROGRESS_TIMER_ID, 120, NULL);
 
-	EnableWindow(hWnd, FALSE);
+	if (hWnd)
+		EnableWindow(hWnd, FALSE);
 
 	InstallProgressContext ctx = {};
 	ctx.doneEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
 	if (!ctx.doneEvent)
 	{
-		EnableWindow(hWnd, TRUE);
+		if (hWnd)
+			EnableWindow(hWnd, TRUE);
 		DestroyWindow(hProgressWnd);
 		if (cacheOnlyMode)
 			RebuildSystemIconCacheOnly();
@@ -5907,7 +5997,8 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 	{
 		SetInstallDiscoveryProgressCallback(NULL, NULL);
 		CloseHandle(ctx.doneEvent);
-		EnableWindow(hWnd, TRUE);
+		if (hWnd)
+			EnableWindow(hWnd, TRUE);
 		DestroyWindow(hProgressWnd);
 		if (cacheOnlyMode)
 			RebuildSystemIconCacheOnly();
@@ -5925,7 +6016,9 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 		MSG msg = {};
 		while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
 		{
-			if (!IsDialogMessage(hProgressWnd, &msg) && !IsDialogMessage(hWnd, &msg))
+			BOOL handledByProgress = IsDialogMessage(hProgressWnd, &msg);
+			BOOL handledByOwner = hWnd ? IsDialogMessage(hWnd, &msg) : FALSE;
+			if (!handledByProgress && !handledByOwner)
 			{
 				TranslateMessage(&msg);
 				DispatchMessage(&msg);
@@ -5941,10 +6034,12 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 	CloseHandle(ctx.doneEvent);
 
 	DestroyWindow(hProgressWnd);
-	EnableWindow(hWnd, TRUE);
-	SetActiveWindow(hWnd);
+	if (hWnd)
+	{
+		EnableWindow(hWnd, TRUE);
+		SetActiveWindow(hWnd);
+	}
 }
-
 
 static std::string DownloadVersionFile()
 {
@@ -5972,330 +6067,334 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 {
 	switch (uMsg)
 	{
-		case WM_INITDIALOG:
+	case WM_INITDIALOG:
+	{
+		// Add info to caption
+		std::string versionStr = GetAppVersion();
+		std::string title = std::string(PROJECT_NAME) + " " + versionStr + " Built: " + __DATE__;
+		SetWindowTextA(hWnd, title.c_str());
+		CenterWindowOnScreen(hWnd, GetForegroundWindow());
+
+		// Set dialog icon
+		HICON hIcon = LoadIconA((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+		SendMessage(hWnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+		SendMessage(hWnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
+
+		// Setup customized hyperlink control
+		HWND hWndCtrl = GetDlgItem(hWnd, IDC_HYPERLINK);
+		if (hWndCtrl)
 		{
-			// Add info to caption
-			std::string versionStr = GetAppVersion();
-			std::string title = std::string(PROJECT_NAME) + " " + versionStr + " Built: " + __DATE__;
-			SetWindowTextA(hWnd, title.c_str());
-
-			// Set dialog icon
-			HICON hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
-			SendMessage(hWnd, WM_SETICON, ICON_BIG, (LPARAM) hIcon);
-			SendMessage(hWnd, WM_SETICON, ICON_SMALL, (LPARAM) hIcon);
-
-			// Setup customized hyperlink control
-			HWND hWndCtrl = GetDlgItem(hWnd, IDC_HYPERLINK);
-			if (hWndCtrl)
-			{
-				// Font options
-				HFONT fontHandle = (HFONT) SendMessage(hWndCtrl, WM_GETFONT, 0, 0);
-				if (!fontHandle)
-					fontHandle = (HFONT) GetStockObject(DEFAULT_GUI_FONT);
-
-				if (fontHandle)
-				{
-					LOGFONT lf;
-					if (GetObject(fontHandle, sizeof(LOGFONT), &lf) != 0)
-					{
-						// Emphasized font
-						lf.lfHeight = URL_FONT_HEIGHT;
-						lf.lfWeight = URL_FONT_WIDTH;
-						tweakedFont = CreateFontIndirect(&lf);
-						if (tweakedFont)
-							SendMessageA(hWndCtrl, WM_SETFONT, WPARAM(tweakedFont), TRUE);
-
-						// Underlined version
-						lf.lfUnderline = TRUE;
-						undlineFont = CreateFontIndirect(&lf);
-					}
-				}
-
-				// Hyperlink finger cursor
-				static const BYTE curAND[128] =
-				{
-					0xF9,0xFF,0xFF,0xFF, 0xF0,0xFF,0xFF,0xFF, 0xF0,0xFF,0xFF,0xFF, 0xF0,0xFF,0xFF,0xFF,
-					0xF0,0xFF,0xFF,0xFF, 0xF0,0x3F,0xFF,0xFF, 0xF0,0x07,0xFF,0xFF, 0xF0,0x01,0xFF,0xFF,
-					0xF0,0x00,0xFF,0xFF, 0x10,0x00,0x7F,0xFF, 0x00,0x00,0x7F,0xFF, 0x00,0x00,0x7F,0xFF,
-					0x80,0x00,0x7F,0xFF, 0xC0,0x00,0x7F,0xFF, 0xC0,0x00,0x7F,0xFF, 0xE0,0x00,0x7F,0xFF,
-					0xE0,0x00,0xFF,0xFF, 0xF0,0x00,0xFF,0xFF, 0xF0,0x00,0xFF,0xFF, 0xF8,0x01,0xFF,0xFF,
-					0xF8,0x01,0xFF,0xFF, 0xF8,0x01,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,
-					0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF,
-					0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF, 0xFF,0xFF,0xFF,0xFF
-				};
-				static const BYTE curXOR[128] =
-				{
-					0x00,0x00,0x00,0x00, 0x06,0x00,0x00,0x00, 0x06,0x00,0x00,0x00, 0x06,0x00,0x00,0x00,
-					0x06,0x00,0x00,0x00, 0x06,0x00,0x00,0x00, 0x06,0xC0,0x00,0x00, 0x06,0xD8,0x00,0x00,
-					0x06,0xDA,0x00,0x00, 0x06,0xDB,0x00,0x00, 0x67,0xFB,0x00,0x00, 0x77,0xFF,0x00,0x00,
-					0x37,0xFF,0x00,0x00, 0x17,0xFF,0x00,0x00, 0x1F,0xFF,0x00,0x00, 0x0F,0xFF,0x00,0x00,
-					0x0F,0xFE,0x00,0x00, 0x07,0xFE,0x00,0x00, 0x07,0xFE,0x00,0x00, 0x03,0xFC,0x00,0x00,
-					0x03,0xFC,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
-					0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00,
-					0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x00,0x00,0x00,0x00
-				};
-				mouseOverCursor = CreateCursor(GetModuleHandle(NULL), 5, 0, 32, 32, curAND, curXOR);
-
-				// Subclasses the control
-				SetWindowSubclass(hWndCtrl, HypLinkSubclass, 1138, 0);
-			}
-
-			// Tweak the button font too
-			HFONT fontHandle = (HFONT) SendMessage(GetDlgItem(hWnd, IDC_INSTALL_UNINSTALL), WM_GETFONT, 0, 0);
+			// Font options
+			HFONT fontHandle = (HFONT)SendMessage(hWndCtrl, WM_GETFONT, 0, 0);
 			if (!fontHandle)
-				fontHandle = (HFONT) GetStockObject(DEFAULT_GUI_FONT);
+				fontHandle = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+
 			if (fontHandle)
 			{
 				LOGFONT lf;
 				if (GetObject(fontHandle, sizeof(LOGFONT), &lf) != 0)
 				{
 					// Emphasized font
-					lf.lfHeight = 14;
-					lf.lfWeight = FW_MEDIUM;
-					HFONT buttonFont = CreateFontIndirect(&lf);
-					SendMessageA(GetDlgItem(hWnd, IDC_INSTALL_UNINSTALL), WM_SETFONT, WPARAM(buttonFont), TRUE);
-					SendMessageA(GetDlgItem(hWnd, IDC_REFRESH), WM_SETFONT, WPARAM(buttonFont), TRUE);
-						SendMessageA(GetDlgItem(hWnd, IDC_REINSTALL), WM_SETFONT, WPARAM(buttonFont), TRUE);
-					SendMessageA(GetDlgItem(hWnd, IDC_OPEN_INSTALL_FOLDER), WM_SETFONT, WPARAM(buttonFont), TRUE);
-					SendMessageA(GetDlgItem(hWnd, IDC_PACKAGE_ICONS), WM_SETFONT, WPARAM(buttonFont), TRUE);
+					lf.lfHeight = URL_FONT_HEIGHT;
+					lf.lfWeight = URL_FONT_WIDTH;
+					tweakedFont = CreateFontIndirect(&lf);
+					if (tweakedFont)
+						SendMessageA(hWndCtrl, WM_SETFONT, WPARAM(tweakedFont), TRUE);
+
+					// Underlined version
+					lf.lfUnderline = TRUE;
+					undlineFont = CreateFontIndirect(&lf);
 				}
 			}
 
-			if (isInstalled)
-				SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
-
-			UpdateInstallDependentControls(hWnd);
-			UpdateInstallerTheme(hWnd);
-
-			return (INT_PTR) TRUE;
-		}
-		break;
-
-		case WM_THEMECHANGED:
-		case WM_SYSCOLORCHANGE:
-		case WM_SETTINGCHANGE:
-			UpdateInstallerTheme(hWnd);
-			return (INT_PTR) TRUE;
-
-		case WM_ERASEBKGND:
-		{
-			RECT rc = {};
-			GetClientRect(hWnd, &rc);
-			FillRect((HDC) wParam, &rc, gDialogBackgroundBrush ? gDialogBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
-			return (INT_PTR) TRUE;
-		}
-
-		case WM_COMMAND:
-		{
-			switch (LOWORD(wParam))
-			{
-				// Install/Uninstall
-				case IDC_INSTALL_UNINSTALL:
+			// Hyperlink finger cursor
+			static const BYTE curAND[128] =
 				{
-					if (!isInstalled)
+					0xF9, 0xFF, 0xFF, 0xFF, 0xF0, 0xFF, 0xFF, 0xFF, 0xF0, 0xFF, 0xFF, 0xFF, 0xF0, 0xFF, 0xFF, 0xFF,
+					0xF0, 0xFF, 0xFF, 0xFF, 0xF0, 0x3F, 0xFF, 0xFF, 0xF0, 0x07, 0xFF, 0xFF, 0xF0, 0x01, 0xFF, 0xFF,
+					0xF0, 0x00, 0xFF, 0xFF, 0x10, 0x00, 0x7F, 0xFF, 0x00, 0x00, 0x7F, 0xFF, 0x00, 0x00, 0x7F, 0xFF,
+					0x80, 0x00, 0x7F, 0xFF, 0xC0, 0x00, 0x7F, 0xFF, 0xC0, 0x00, 0x7F, 0xFF, 0xE0, 0x00, 0x7F, 0xFF,
+					0xE0, 0x00, 0xFF, 0xFF, 0xF0, 0x00, 0xFF, 0xFF, 0xF0, 0x00, 0xFF, 0xFF, 0xF8, 0x01, 0xFF, 0xFF,
+					0xF8, 0x01, 0xFF, 0xFF, 0xF8, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+					0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+					0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+			static const BYTE curXOR[128] =
+				{
+					0x00, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00,
+					0x06, 0x00, 0x00, 0x00, 0x06, 0x00, 0x00, 0x00, 0x06, 0xC0, 0x00, 0x00, 0x06, 0xD8, 0x00, 0x00,
+					0x06, 0xDA, 0x00, 0x00, 0x06, 0xDB, 0x00, 0x00, 0x67, 0xFB, 0x00, 0x00, 0x77, 0xFF, 0x00, 0x00,
+					0x37, 0xFF, 0x00, 0x00, 0x17, 0xFF, 0x00, 0x00, 0x1F, 0xFF, 0x00, 0x00, 0x0F, 0xFF, 0x00, 0x00,
+					0x0F, 0xFE, 0x00, 0x00, 0x07, 0xFE, 0x00, 0x00, 0x07, 0xFE, 0x00, 0x00, 0x03, 0xFC, 0x00, 0x00,
+					0x03, 0xFC, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+					0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
+			mouseOverCursor = CreateCursor(GetModuleHandle(NULL), 5, 0, 32, 32, curAND, curXOR);
+
+			// Subclasses the control
+			SetWindowSubclass(hWndCtrl, HypLinkSubclass, 1138, 0);
+		}
+
+		// Tweak the button font too
+		HFONT fontHandle = (HFONT)SendMessage(GetDlgItem(hWnd, IDC_INSTALL_UNINSTALL), WM_GETFONT, 0, 0);
+		if (!fontHandle)
+			fontHandle = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+		if (fontHandle)
+		{
+			LOGFONT lf;
+			if (GetObject(fontHandle, sizeof(LOGFONT), &lf) != 0)
+			{
+				// Emphasized font
+				lf.lfHeight = 14;
+				lf.lfWeight = FW_MEDIUM;
+				HFONT buttonFont = CreateFontIndirect(&lf);
+				SendMessageA(GetDlgItem(hWnd, IDC_INSTALL_UNINSTALL), WM_SETFONT, WPARAM(buttonFont), TRUE);
+				SendMessageA(GetDlgItem(hWnd, IDC_REFRESH), WM_SETFONT, WPARAM(buttonFont), TRUE);
+				SendMessageA(GetDlgItem(hWnd, IDC_REINSTALL), WM_SETFONT, WPARAM(buttonFont), TRUE);
+				SendMessageA(GetDlgItem(hWnd, IDC_OPEN_INSTALL_FOLDER), WM_SETFONT, WPARAM(buttonFont), TRUE);
+				SendMessageA(GetDlgItem(hWnd, IDC_PACKAGE_ICONS), WM_SETFONT, WPARAM(buttonFont), TRUE);
+			}
+		}
+
+		if (isInstalled)
+			SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
+
+		UpdateInstallDependentControls(hWnd);
+		UpdateInstallerTheme(hWnd);
+
+		return (INT_PTR)TRUE;
+	}
+	break;
+
+	case WM_THEMECHANGED:
+	case WM_SYSCOLORCHANGE:
+	case WM_SETTINGCHANGE:
+		UpdateInstallerTheme(hWnd);
+		return (INT_PTR)TRUE;
+
+	case WM_ERASEBKGND:
+	{
+		RECT rc = {};
+		GetClientRect(hWnd, &rc);
+		FillRect((HDC)wParam, &rc, gDialogBackgroundBrush ? gDialogBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+		return (INT_PTR)TRUE;
+	}
+
+	case WM_COMMAND:
+	{
+		switch (LOWORD(wParam))
+		{
+		// Install/Uninstall
+		case IDC_INSTALL_UNINSTALL:
+		{
+			if (!isInstalled)
+			{
+				Install();
+				isInstalled = TRUE;
+				SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
+				UpdateInstallDependentControls(hWnd);
+				if (StartBackgroundIconCacheScan())
+					MessageBoxA(hWnd, "Installation complete. Icon cache re-scan opened in a separate progress window.", "Completion:", (MB_OK | MB_ICONASTERISK));
+				else
+					MessageBoxA(hWnd, "Installation complete, but the icon cache re-scan could not be started.", "Completion:", (MB_OK | MB_ICONWARNING));
+			}
+			else
+			{
+				if (MessageBoxA(hWnd, "Uninstall " PROJECT_NAME "?", "Confirmation:", (MB_OKCANCEL | MB_ICONQUESTION)) == IDOK)
+				{
+					int ur = Uninstall();
+					isInstalled = FALSE;
+					SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Install");
+					UpdateInstallDependentControls(hWnd);
+
+					if (ur == 0)
 					{
-						Install();
-						isInstalled = TRUE;
-						SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
-						UpdateInstallDependentControls(hWnd);
-						if (StartBackgroundIconCacheScan())
-							MessageBoxA(hWnd, "Installation complete. Icon cache scan started in the background.", "Completion:", (MB_OK | MB_ICONASTERISK));
-						else
-							MessageBoxA(hWnd, "Installation complete, but the background icon cache scan could not be started.", "Completion:", (MB_OK | MB_ICONWARNING));
+						char msg[512];
+						sprintf_s(msg, sizeof(msg), PROJECT_NAME " registry uninstalled, but to complete the uninstallation manually delete the\n\"%S\"\nfolder after this dialog closes.", myPathGlobal);
+						MessageBoxA(hWnd, msg, "Completion:", (MB_OK | MB_ICONASTERISK));
 					}
 					else
-					{
-						if (MessageBoxA(hWnd, "Uninstall " PROJECT_NAME"?", "Confirmation:", (MB_OKCANCEL | MB_ICONQUESTION)) == IDOK)
-						{
-							int ur = Uninstall();
-							isInstalled = FALSE;
-							SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Install");
-							UpdateInstallDependentControls(hWnd);
-
-							if (ur == 0)
-							{
-								char msg[512];
-								sprintf_s(msg, sizeof(msg), PROJECT_NAME " registry uninstalled, but to complete the uninstallation manually delete the\n\"%S\"\nfolder after this dialog closes.", myPathGlobal);
-								MessageBoxA(hWnd, msg, "Completion:", (MB_OK | MB_ICONASTERISK));
-							}
-							else
-								MessageBoxA(hWnd, PROJECT_NAME " uninstalled.", "Completion:", (MB_OK | MB_ICONASTERISK));
-						}
-					}
-
-					return (INT_PTR) TRUE;
-				}
-				break;
-
-				case IDC_REINSTALL:
-				{
-					if (isInstalled)
-					{
-						if (StartBackgroundIconCacheScan())
-							MessageBoxA(hWnd, "Icon cache re-scan started in the background.", "Completion:", (MB_OK | MB_ICONASTERISK));
-						else
-							MessageBoxA(hWnd, "Unable to start the background icon cache re-scan.", "Error:", (MB_OK | MB_ICONERROR));
-						UpdateInstallDependentControls(hWnd);
-					}
-					return (INT_PTR) TRUE;
-				}
-				break;
-
-				// Refresh Windows icon cache DB
-				case IDC_REFRESH:
-				{
-					ResetWindowsIconCache();
-					return (INT_PTR) TRUE;
-				}
-				break;
-
-				case IDC_OPEN_INSTALL_FOLDER:
-				{
-					DWORD attr = GetFileAttributesW(myPathGlobal);
-					if ((attr == INVALID_FILE_ATTRIBUTES) || !(attr & FILE_ATTRIBUTE_DIRECTORY))
-					{
-						MessageBoxA(hWnd, "Install folder does not exist yet.", "Info:", (MB_OK | MB_ICONINFORMATION));
-						return (INT_PTR) TRUE;
-					}
-
-					if (!OpenDirectoryInExplorer(myPathGlobal))
-						MessageBoxA(hWnd, "Unable to open install folder.", "Error:", (MB_OK | MB_ICONERROR));
-
-					return (INT_PTR) TRUE;
-				}
-				break;
-
-				case IDC_PACKAGE_ICONS:
-				{
-					PackageIconsIntoDll(hWnd);
-					return (INT_PTR) TRUE;
-				}
-				break;
-
-				case IDC_SET_DEFAULT_ICON:
-				{
-				// Open the system default icon picker
-				if (ShowSystemDefaultIconPicker() == EXIT_SUCCESS)
-				{
-					if (!gSystemDefaultIconPath.empty())
-					{
-						if (SetSystemDefaultFolderIcon(gSystemDefaultIconPath.c_str(), gSystemDefaultIconIndex))
-							MessageBoxA(hWnd, "System default folder icon set for both closed and open folders. If Explorer still shows the old icon, use Restart Explorer.", "Success:", MB_OK | MB_ICONINFORMATION);
-						else
-							MessageBoxA(hWnd, "Unable to set the system default folder icon.", "Error:", MB_OK | MB_ICONERROR);
-					}
-				}
-				return (INT_PTR) TRUE;
-			}
-			break;
-
-			case IDC_RESTORE_DEFAULT_ICON:
-			{
-				if (RestoreSystemDefaultFolderIcon())
-					MessageBoxA(hWnd, "System default folder icon restored.", "Success:", MB_OK | MB_ICONINFORMATION);
-				else
-					MessageBoxA(hWnd, "Unable to restore the system default folder icon.", "Error:", MB_OK | MB_ICONERROR);
-				return (INT_PTR) TRUE;
-			}
-			break;
-
-			case IDC_RESTART_EXPLORER:
-			{
-				if (RestartExplorerProcess())
-					MessageBoxA(hWnd, "Explorer restarted.", "Success:", MB_OK | MB_ICONINFORMATION);
-				else
-					MessageBoxA(hWnd, "Could not restart Explorer. Try running the installer as administrator.", "Error:", MB_OK | MB_ICONERROR);
-				return (INT_PTR) TRUE;
-			}
-			break;
-
-			case IDC_CHECK_UPDATES:
-			{
-				if (isInstalled && isRunningOutsideInstallFolder)
-				{
-					RunReinstallFlow(hWnd);
-					return (INT_PTR) TRUE;
-				}
-
-				std::string remoteVersion = DownloadVersionFile();
-				std::string localVersion = GetAppVersion();
-				if (remoteVersion.empty()) {
-					MessageBoxA(hWnd, "Não foi possível verificar atualizações.", "Erro:", MB_OK | MB_ICONERROR);
-				} else if (remoteVersion == localVersion) {
-					MessageBoxA(hWnd, "Você já tem a versão mais recente.", "Atualização:", MB_OK | MB_ICONINFORMATION);
-				} else {
-					std::string msg = "Nova versão disponível: " + remoteVersion + "\n\nDeseja fazer o download agora?";
-					int result = MessageBoxA(hWnd, msg.c_str(), "Atualização:", MB_YESNO | MB_ICONINFORMATION);
-					if (result == IDYES)
-						OpenDownloadUrl(hWnd);
+						MessageBoxA(hWnd, PROJECT_NAME " uninstalled.", "Completion:", (MB_OK | MB_ICONASTERISK));
 				}
 			}
-			break;
 
-			};
+			return (INT_PTR)TRUE;
 		}
 		break;
 
-		case WM_CTLCOLORSTATIC:
+		case IDC_REINSTALL:
 		{
-			HDC hdcStatic = (HDC) wParam;
-			SetTextColor(hdcStatic, gDialogTextColor);
+			if (isInstalled)
+			{
+				if (StartBackgroundIconCacheScan())
+					MessageBoxA(hWnd, "Icon cache re-scan opened in a separate progress window.", "Completion:", (MB_OK | MB_ICONASTERISK));
+				else
+					MessageBoxA(hWnd, "Unable to start the icon cache re-scan.", "Error:", (MB_OK | MB_ICONERROR));
+				UpdateInstallDependentControls(hWnd);
+			}
+			return (INT_PTR)TRUE;
+		}
+		break;
+
+		// Refresh Windows icon cache DB
+		case IDC_REFRESH:
+		{
+			ResetWindowsIconCache();
+			return (INT_PTR)TRUE;
+		}
+		break;
+
+		case IDC_OPEN_INSTALL_FOLDER:
+		{
+			DWORD attr = GetFileAttributesW(myPathGlobal);
+			if ((attr == INVALID_FILE_ATTRIBUTES) || !(attr & FILE_ATTRIBUTE_DIRECTORY))
+			{
+				MessageBoxA(hWnd, "Install folder does not exist yet.", "Info:", (MB_OK | MB_ICONINFORMATION));
+				return (INT_PTR)TRUE;
+			}
+
+			if (!OpenDirectoryInExplorer(myPathGlobal))
+				MessageBoxA(hWnd, "Unable to open install folder.", "Error:", (MB_OK | MB_ICONERROR));
+
+			return (INT_PTR)TRUE;
+		}
+		break;
+
+		case IDC_PACKAGE_ICONS:
+		{
+			PackageIconsIntoDll(hWnd);
+			return (INT_PTR)TRUE;
+		}
+		break;
+
+		case IDC_SET_DEFAULT_ICON:
+		{
+			// Open the system default icon picker
+			if (ShowSystemDefaultIconPicker() == EXIT_SUCCESS)
+			{
+				if (!gSystemDefaultIconPath.empty())
+				{
+					if (SetSystemDefaultFolderIcon(gSystemDefaultIconPath.c_str(), gSystemDefaultIconIndex))
+						MessageBoxA(hWnd, "System default folder icon set for both closed and open folders. If Explorer still shows the old icon, use Restart Explorer.", "Success:", MB_OK | MB_ICONINFORMATION);
+					else
+						MessageBoxA(hWnd, "Unable to set the system default folder icon.", "Error:", MB_OK | MB_ICONERROR);
+				}
+			}
+			return (INT_PTR)TRUE;
+		}
+		break;
+
+		case IDC_RESTORE_DEFAULT_ICON:
+		{
+			if (RestoreSystemDefaultFolderIcon())
+				MessageBoxA(hWnd, "System default folder icon restored.", "Success:", MB_OK | MB_ICONINFORMATION);
+			else
+				MessageBoxA(hWnd, "Unable to restore the system default folder icon.", "Error:", MB_OK | MB_ICONERROR);
+			return (INT_PTR)TRUE;
+		}
+		break;
+
+		case IDC_RESTART_EXPLORER:
+		{
+			if (RestartExplorerProcess())
+				MessageBoxA(hWnd, "Explorer restarted.", "Success:", MB_OK | MB_ICONINFORMATION);
+			else
+				MessageBoxA(hWnd, "Could not restart Explorer. Try running the installer as administrator.", "Error:", MB_OK | MB_ICONERROR);
+			return (INT_PTR)TRUE;
+		}
+		break;
+
+		case IDC_CHECK_UPDATES:
+		{
+			if (isInstalled && isRunningOutsideInstallFolder)
+			{
+				RunReinstallFlow(hWnd);
+				return (INT_PTR)TRUE;
+			}
+
+			std::string remoteVersion = DownloadVersionFile();
+			std::string localVersion = GetAppVersion();
+			if (remoteVersion.empty())
+			{
+				MessageBoxA(hWnd, "Não foi possível verificar atualizações.", "Erro:", MB_OK | MB_ICONERROR);
+			}
+			else if (remoteVersion == localVersion)
+			{
+				MessageBoxA(hWnd, "Você já tem a versão mais recente.", "Atualização:", MB_OK | MB_ICONINFORMATION);
+			}
+			else
+			{
+				std::string msg = "Nova versão disponível: " + remoteVersion + "\n\nDeseja fazer o download agora?";
+				int result = MessageBoxA(hWnd, msg.c_str(), "Atualização:", MB_YESNO | MB_ICONINFORMATION);
+				if (result == IDYES)
+					OpenDownloadUrl(hWnd);
+			}
+		}
+		break;
+		};
+	}
+	break;
+
+	case WM_CTLCOLORSTATIC:
+	{
+		HDC hdcStatic = (HDC)wParam;
+		SetTextColor(hdcStatic, gDialogTextColor);
+		SetBkColor(hdcStatic, gDialogBackgroundColor);
+
+		DWORD id = GetDlgCtrlID((HWND)lParam);
+		if (id == IDC_HYPERLINK)
+		{
+			SetTextColor(hdcStatic, urlColor);
 			SetBkColor(hdcStatic, gDialogBackgroundColor);
-
-			DWORD id = GetDlgCtrlID((HWND)lParam);
-			if (id == IDC_HYPERLINK)
-			{
-				SetTextColor(hdcStatic, urlColor);
-				SetBkColor(hdcStatic, gDialogBackgroundColor);
-			}
-
-			if (gDialogBackgroundBrush)
-				return (INT_PTR) gDialogBackgroundBrush;
 		}
-		break;
 
-		case WM_CTLCOLORBTN:
+		if (gDialogBackgroundBrush)
+			return (INT_PTR)gDialogBackgroundBrush;
+	}
+	break;
+
+	case WM_CTLCOLORBTN:
+	{
+		HDC hdcButton = (HDC)wParam;
+		SetTextColor(hdcButton, gDialogTextColor);
+		SetBkColor(hdcButton, gDialogButtonColor);
+		if (gDialogButtonBrush)
+			return (LRESULT)gDialogButtonBrush;
+	}
+	break;
+
+	case WM_DESTROY:
+		if (gDialogBackgroundBrush)
 		{
-			HDC hdcButton = (HDC) wParam;
-			SetTextColor(hdcButton, gDialogTextColor);
-			SetBkColor(hdcButton, gDialogButtonColor);
-			if (gDialogButtonBrush)
-				return (LRESULT) gDialogButtonBrush;
+			DeleteObject(gDialogBackgroundBrush);
+			gDialogBackgroundBrush = NULL;
+		}
+		if (gDialogButtonBrush)
+		{
+			DeleteObject(gDialogButtonBrush);
+			gDialogButtonBrush = NULL;
 		}
 		break;
 
-		case WM_DESTROY:
-			if (gDialogBackgroundBrush)
-			{
-				DeleteObject(gDialogBackgroundBrush);
-				gDialogBackgroundBrush = NULL;
-			}
-			if (gDialogButtonBrush)
-			{
-				DeleteObject(gDialogButtonBrush);
-				gDialogButtonBrush = NULL;
-			}
-			break;
-
-		case WM_CLOSE:		
-		EndDialog(hWnd, 0);		
+	case WM_CLOSE:
+		EndDialog(hWnd, 0);
 		break;
 	}
 
-	return (INT_PTR) FALSE;
+	return (INT_PTR)FALSE;
 }
-
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
-	if (pCmdLine && wcsstr(pCmdLine, L"--version")) {
+	if (pCmdLine && wcsstr(pCmdLine, L"--version"))
+	{
 		std::string version = GetAppVersion();
 		// Get current working directory and write version to file
 		wchar_t szPath[MAX_PATH];
 		GetCurrentDirectoryW(MAX_PATH, szPath);
 		wcscat_s(szPath, MAX_PATH, L"\\version.txt");
-		FILE* versionFile = NULL;
-		if ((_wfopen_s(&versionFile, szPath, L"w") == 0) && versionFile) {
+		FILE *versionFile = NULL;
+		if ((_wfopen_s(&versionFile, szPath, L"w") == 0) && versionFile)
+		{
 			fprintf(versionFile, "%s", version.c_str());
 			fclose(versionFile);
 		}
@@ -6311,14 +6410,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 		if (wcscat_s(myPathGlobal, _countof(myPathGlobal), L"\\" INSTALL_FOLDER L"\\") != 0)
 			CRITICAL("Path size limit error!");
 
-		RebuildSystemIconCacheOnly();
+		RunInstallWithProgressWindow(NULL, FALSE, TRUE);
 		return EXIT_SUCCESS;
 	}
 
 	BOOL shellInvocation = (pCmdLine && ((wcsstr(pCmdLine, L"--folder") != NULL) || (wcsstr(pCmdLine, L"" COMMAND_FOLDER) != NULL)));
 
 	// Should only be one instance running
-	if(!shellInvocation && FindDoppelganger())
+	if (!shellInvocation && FindDoppelganger())
 		return EXIT_FAILURE;
 
 	// Our path from "%ProgramFiles(x86)%" base
@@ -6342,18 +6441,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 		CRITICAL_API_FAIL(GetModuleFileNameW, GetLastError());
 	BuildInstalledExePath(installedExePath, _countof(installedExePath));
 	isRunningOutsideInstallFolder = !AreSamePath(currentExePath, installedExePath);
-	
+
 	// Icon resource set index per OS version
-	OSVERSIONINFOA nfo = { sizeof(OSVERSIONINFOA), 0,0,0};
-	RtlGetVersion((PRTL_OSVERSIONINFOEXW) &nfo);
+	OSVERSIONINFOA nfo = {sizeof(OSVERSIONINFOA), 0, 0, 0};
+	RtlGetVersion((PRTL_OSVERSIONINFOEXW)&nfo);
 	if (nfo.dwMajorVersion >= 10)
 	{
-		if(nfo.dwBuildNumber >= 22000)
+		if (nfo.dwBuildNumber >= 22000)
 			iconOffsetGlobal = WIN11_ICON_OFFSET;
 		else
 			iconOffsetGlobal = WIN10_ICON_OFFSET;
 	}
-	
+
 	// Silent registry reinstall (used by build-and-deploy.bat)
 	if (pCmdLine && (wcsstr(pCmdLine, L"--reinstall-registry") != NULL))
 	{
@@ -6364,10 +6463,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 	// We're passed an icon index argument?
 	if (isInstalled)
 	{
-		if(pCmdLine && (wcslen(pCmdLine) > 0))
+		if (pCmdLine && (wcslen(pCmdLine) > 0))
 		{
 			int argc = 0;
-			LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+			LPWSTR *argv = CommandLineToArgvW(GetCommandLineW(), &argc);
 			if (argv && (argc > 1))
 			{
 				int builtInIndex = -1;
@@ -6409,12 +6508,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
 				if (folderArg)
 				{
-					MigrateLegacyFolderIconIndex((LPWSTR) folderArg);
+					MigrateLegacyFolderIconIndex((LPWSTR)folderArg);
 
 					if (builtInIndex >= 0)
-						SetFolderColor(builtInIndex, (LPWSTR) folderArg);
+						SetFolderColor(builtInIndex, (LPWSTR)folderArg);
 					else if (resourceArg && resourceArg[0])
-						SetFolderIconResource(resourceArg, resourceIndex, (LPWSTR) folderArg);
+						SetFolderIconResource(resourceArg, resourceIndex, (LPWSTR)folderArg);
 					else
 						return ShowFolderIconPicker(folderArg);
 				}
@@ -6426,5 +6525,5 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 		}
 	}
 
-	return (int) DialogBoxParamA(hInstance, (LPCSTR) IDD_MAIN, 0, &DlgProc, 0);
+	return (int)DialogBoxParamA(hInstance, (LPCSTR)IDD_MAIN, 0, &DlgProc, 0);
 }
