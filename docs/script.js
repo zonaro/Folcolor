@@ -87,6 +87,13 @@ const translations = {
     ctaText:
       "Foldrion is MIT licensed and built for people who want control over their Windows workspace.",
     ctaButton: "Open the repository",
+    supportEyebrow: "Support the developer",
+    supportTitle: "Help keep Foldrion alive.",
+    supportText:
+      "Zonaro is an independent developer maintaining Foldrion on their own, and any amount can help with the project's ongoing maintenance.",
+    supportKeyLabel: "Pix key",
+    supportQrCaption: "Scan the QR code with your banking app to send support via Pix.",
+    supportQrAlt: "Pix QR code for supporting Zonaro",
     pageTitle: "Foldrion | Color Your Windows Folders",
     pageDescription:
       "Foldrion is a free open source Windows app to customize folder icons with colors, images, and icon packs."
@@ -179,6 +186,13 @@ const translations = {
     ctaText:
       "Foldrion usa licença MIT e foi feito para quem quer controle sobre o próprio espaço de trabalho no Windows.",
     ctaButton: "Abrir o repositório",
+    supportEyebrow: "Apoie o desenvolvedor",
+    supportTitle: "Ajude a manter o Foldrion vivo.",
+    supportText:
+      "Zonaro é um desenvolvedor independente e mantém o Foldrion por conta própria, e qualquer valor já ajuda na manutenção contínua do projeto.",
+    supportKeyLabel: "Chave Pix",
+    supportQrCaption: "Escaneie o QR Code no app do seu banco para enviar um apoio via Pix.",
+    supportQrAlt: "QR Code Pix para apoiar o Zonaro",
     pageTitle: "Foldrion | Personalize suas pastas no Windows",
     pageDescription:
       "Foldrion é um app gratuito e open source para Windows que personaliza ícones de pasta com cores, imagens e pacotes de ícones."
@@ -190,6 +204,9 @@ const storedLanguage = window.localStorage.getItem("foldrion-language");
 const browserLanguage = (navigator.languages && navigator.languages[0]) || navigator.language || "en";
 const versionUrl = "https://raw.githubusercontent.com/zonaro/Foldrion/refs/heads/main/src/Controller/Win32/Release/version.txt";
 const iconPacksRootUrl = "https://api.github.com/repos/zonaro/Foldrion/contents/Icons?ref=main";
+const pixKey = "43077469880";
+const pixMerchantName = "ZONARO";
+const pixMerchantCity = "SAO PAULO";
 let currentVersion = null;
 let versionLoadFailed = false;
 let iconPacksLoadFailed = false;
@@ -203,6 +220,59 @@ function currentLanguage() {
 function normalizeLanguage(languageCode) {
   const shortCode = languageCode.toLowerCase().slice(0, 2);
   return supportedLanguages.includes(shortCode) ? shortCode : "en";
+}
+
+function formatPixField(id, value) {
+  const stringValue = String(value);
+  return `${id}${stringValue.length.toString().padStart(2, "0")}${stringValue}`;
+}
+
+function computePixCrc16(payload) {
+  let crc = 0xffff;
+
+  for (let index = 0; index < payload.length; index += 1) {
+    crc ^= payload.charCodeAt(index) << 8;
+
+    for (let bit = 0; bit < 8; bit += 1) {
+      crc = (crc & 0x8000) !== 0 ? ((crc << 1) ^ 0x1021) : (crc << 1);
+      crc &= 0xffff;
+    }
+  }
+
+  return crc.toString(16).toUpperCase().padStart(4, "0");
+}
+
+function buildPixPayload() {
+  const merchantAccount = formatPixField(
+    "26",
+    `${formatPixField("00", "BR.GOV.BCB.PIX")}${formatPixField("01", pixKey)}`
+  );
+  const additionalData = formatPixField("62", formatPixField("05", "***"));
+  const payloadWithoutCrc = [
+    formatPixField("00", "01"),
+    formatPixField("01", "11"),
+    merchantAccount,
+    formatPixField("52", "0000"),
+    formatPixField("53", "986"),
+    formatPixField("58", "BR"),
+    formatPixField("59", pixMerchantName),
+    formatPixField("60", pixMerchantCity),
+    additionalData,
+    "6304"
+  ].join("");
+
+  return `${payloadWithoutCrc}${computePixCrc16(payloadWithoutCrc)}`;
+}
+
+function renderPixQrCode() {
+  const qrImage = document.getElementById("pix-qr-image");
+
+  if (!qrImage) {
+    return;
+  }
+
+  const payload = buildPixPayload();
+  qrImage.src = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(payload)}`;
 }
 
 function updateVersionText(language) {
@@ -469,6 +539,7 @@ async function loadCurrentVersion() {
 
 const initialLanguage = normalizeLanguage(storedLanguage || browserLanguage);
 updatePageLanguage(initialLanguage);
+renderPixQrCode();
 loadCurrentVersion();
 loadIconPacks();
 
