@@ -81,6 +81,23 @@
         <span class="brand-text">Foldrion</span>
       </a>
       <div class="topbar-actions">
+        <div class="icon-packs-menu" id="icon-packs-menu">
+          <button
+            class="ghost-link icon-packs-trigger"
+            id="icon-packs-trigger"
+            type="button"
+            aria-haspopup="true"
+            aria-expanded="false"
+          >
+            <span data-i18n="navIconPacks">Icon Packs</span>
+          </button>
+          <div class="icon-packs-dropdown" id="icon-packs-dropdown" hidden>
+            <p class="icon-packs-status" id="icon-packs-status" data-i18n="iconPacksLoading">
+              Loading icon packs...
+            </p>
+            <div class="icon-packs-list" id="icon-packs-list"></div>
+          </div>
+        </div>
         <a
           class="ghost-link"
           href="forms/editor.html"
@@ -208,7 +225,7 @@
           <p class="eyebrow" data-i18n="showcaseEyebrow">See the windows</p>
           <h2 data-i18n="showcaseTitle">Preview the actual Foldrion workflow before you install it.</h2>
           <p class="showcase-intro" data-i18n="showcaseText">
-            The home page now includes simplified recreations of the installer, icon picker, and derived icon editor so visitors can understand the app at a glance.
+            Explore the main screens and understand how installation, icon selection, and custom icon creation work in practice.
           </p>
         </div>
 

@@ -24,6 +24,7 @@ extern void Install();
 extern int Uninstall();
 extern BOOL HasInstallRegistry();
 extern void RebuildSystemIconCacheOnly();
+static BOOL StartBackgroundIconCacheScan();
 
 // ntdll.lib
 typedef long NTSTATUS;
@@ -204,22 +205,48 @@ static BOOL AreSamePath(LPCWSTR leftPath, LPCWSTR rightPath)
 static void UpdateInstallDependentControls(HWND hWnd)
 {
 	HWND hReinstall = GetDlgItem(hWnd, IDC_REINSTALL);
-	if (!hReinstall)
+	HWND hCheckUpdates = GetDlgItem(hWnd, IDC_CHECK_UPDATES);
+	if (!hReinstall && !hCheckUpdates)
 		return;
 
 	if (!isInstalled)
 	{
-		SetWindowTextA(hReinstall, "Re-install");
-		EnableWindow(hReinstall, FALSE);
+		if (hReinstall)
+		{
+			SetWindowTextA(hReinstall, "Re-install");
+			EnableWindow(hReinstall, FALSE);
+		}
+		if (hCheckUpdates)
+			SetWindowTextA(hCheckUpdates, "Check Updates");
 		return;
 	}
 
-	if (isRunningOutsideInstallFolder)
-		SetWindowTextA(hReinstall, "Re-install");
-	else
+	if (hReinstall)
+	{
 		SetWindowTextA(hReinstall, "Re-scan Icons");
+		EnableWindow(hReinstall, TRUE);
+	}
 
-	EnableWindow(hReinstall, TRUE);
+	if (hCheckUpdates)
+	{
+		if (isRunningOutsideInstallFolder)
+			SetWindowTextA(hCheckUpdates, "Update");
+		else
+			SetWindowTextA(hCheckUpdates, "Check Updates");
+	}
+}
+
+static void RunReinstallFlow(HWND hWnd)
+{
+	Install();
+	isInstalled = TRUE;
+	isRunningOutsideInstallFolder = FALSE;
+	SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
+	UpdateInstallDependentControls(hWnd);
+	if (StartBackgroundIconCacheScan())
+		MessageBoxA(hWnd, "Re-installation complete. Icon cache scan started in the background.", "Completion:", (MB_OK | MB_ICONASTERISK));
+	else
+		MessageBoxA(hWnd, "Re-installation complete, but the background icon cache scan could not be started.", "Completion:", (MB_OK | MB_ICONWARNING));
 }
 
 /**
@@ -5724,25 +5751,13 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 
 				case IDC_REINSTALL:
 				{
-					if (isInstalled && !isRunningOutsideInstallFolder)
+					if (isInstalled)
 					{
 						if (StartBackgroundIconCacheScan())
 							MessageBoxA(hWnd, "Icon cache re-scan started in the background.", "Completion:", (MB_OK | MB_ICONASTERISK));
 						else
 							MessageBoxA(hWnd, "Unable to start the background icon cache re-scan.", "Error:", (MB_OK | MB_ICONERROR));
 						UpdateInstallDependentControls(hWnd);
-					}
-					else
-					{
-						Install();
-						isInstalled = TRUE;
-						isRunningOutsideInstallFolder = FALSE;
-						SetDlgItemTextA(hWnd, IDC_INSTALL_UNINSTALL, "Uninstall");
-						UpdateInstallDependentControls(hWnd);
-						if (StartBackgroundIconCacheScan())
-							MessageBoxA(hWnd, "Re-installation complete. Icon cache scan started in the background.", "Completion:", (MB_OK | MB_ICONASTERISK));
-						else
-							MessageBoxA(hWnd, "Re-installation complete, but the background icon cache scan could not be started.", "Completion:", (MB_OK | MB_ICONWARNING));
 					}
 					return (INT_PTR) TRUE;
 				}
@@ -5827,6 +5842,12 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 
 			case IDC_CHECK_UPDATES:
 			{
+				if (isInstalled && isRunningOutsideInstallFolder)
+				{
+					RunReinstallFlow(hWnd);
+					return (INT_PTR) TRUE;
+				}
+
 				std::string remoteVersion = DownloadVersionFile();
 				std::string localVersion = GetAppVersion();
 				if (remoteVersion.empty()) {

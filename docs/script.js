@@ -1,8 +1,15 @@
 const translations = {
   en: {
+    navIconPacks: "Icon Packs",
     navEditor: "Editor demo",
     navGithub: "GitHub",
     languageButton: "PT",
+    iconPacksLoading: "Loading icon packs...",
+    iconPacksUnavailable: "Unable to load icon packs right now.",
+    iconPacksEmpty: "No icon packs were found.",
+    iconPackFolderEmpty: "No DLL files in this pack.",
+    iconPackDownload: "Download",
+    iconPackDownloading: "Downloading...",
     eyebrow: "Open source Windows folder customization",
     heroTitle: "Give every folder its own color, icon, and personality.",
     heroText:
@@ -41,7 +48,7 @@ const translations = {
     showcaseEyebrow: "See the windows",
     showcaseTitle: "Preview the actual Foldrion workflow before you install it.",
     showcaseText:
-      "The home page now includes simplified recreations of the installer, icon picker, and derived icon editor so visitors can understand the app at a glance.",
+      "Explore the main screens and understand how installation, icon selection, and custom icon creation work in practice.",
     installerKicker: "Installer",
     installerTitle: "Install, refresh, and manage shell integration.",
     installerText:
@@ -85,9 +92,16 @@ const translations = {
       "Foldrion is a free open source Windows app to customize folder icons with colors, images, and icon packs."
   },
   pt: {
+    navIconPacks: "Icon Packs",
     navEditor: "Demo do editor",
     navGithub: "GitHub",
     languageButton: "EN",
+    iconPacksLoading: "Carregando pacotes de icones...",
+    iconPacksUnavailable: "Nao foi possivel carregar os pacotes agora.",
+    iconPacksEmpty: "Nenhum pacote de icones foi encontrado.",
+    iconPackFolderEmpty: "Nenhum arquivo DLL neste pacote.",
+    iconPackDownload: "Baixar",
+    iconPackDownloading: "Baixando...",
     eyebrow: "Personalização open source de pastas no Windows",
     heroTitle: "Dê cor, ícone e identidade própria para cada pasta.",
     heroText:
@@ -126,7 +140,7 @@ const translations = {
     showcaseEyebrow: "Veja as janelas",
     showcaseTitle: "Visualize o fluxo real do Foldrion antes mesmo de instalar.",
     showcaseText:
-      "A home agora inclui recriações simplificadas do instalador, do seletor de ícones e do editor derivado para que qualquer visitante entenda o app rapidamente.",
+      "Explore as telas principais e entenda na prática como funcionam a instalação, a escolha de ícones e a criação de ícones personalizados.",
     installerKicker: "Instalador",
     installerTitle: "Instale, atualize e gerencie a integração com o shell.",
     installerText:
@@ -175,8 +189,16 @@ const supportedLanguages = ["en", "pt"];
 const storedLanguage = window.localStorage.getItem("foldrion-language");
 const browserLanguage = (navigator.languages && navigator.languages[0]) || navigator.language || "en";
 const versionUrl = "https://raw.githubusercontent.com/zonaro/Foldrion/refs/heads/main/src/Controller/Win32/Release/version.txt";
+const iconPacksRootUrl = "https://api.github.com/repos/zonaro/Foldrion/contents/Icons?ref=main";
 let currentVersion = null;
 let versionLoadFailed = false;
+let iconPacksLoadFailed = false;
+let iconPacks = [];
+let iconPacksLoadPromise = null;
+
+function currentLanguage() {
+  return document.documentElement.lang || "en";
+}
 
 function normalizeLanguage(languageCode) {
   const shortCode = languageCode.toLowerCase().slice(0, 2);
@@ -230,7 +252,191 @@ function updatePageLanguage(language) {
   });
 
   updateVersionText(language);
+  renderIconPacks();
   window.localStorage.setItem("foldrion-language", language);
+}
+
+function formatFileSize(sizeInBytes) {
+  if (!Number.isFinite(sizeInBytes) || sizeInBytes <= 0) {
+    return "";
+  }
+
+  const units = ["B", "KB", "MB", "GB"];
+  const exponent = Math.min(Math.floor(Math.log(sizeInBytes) / Math.log(1024)), units.length - 1);
+  const value = sizeInBytes / (1024 ** exponent);
+  return `${value.toFixed(value >= 10 || exponent === 0 ? 0 : 1)} ${units[exponent]}`;
+}
+
+function renderIconPacks() {
+  const language = currentLanguage();
+  const content = translations[language];
+  const statusElement = document.getElementById("icon-packs-status");
+  const listElement = document.getElementById("icon-packs-list");
+
+  if (!statusElement || !listElement) {
+    return;
+  }
+
+  listElement.innerHTML = "";
+
+  if (iconPacksLoadFailed) {
+    statusElement.hidden = false;
+    statusElement.textContent = content.iconPacksUnavailable;
+    return;
+  }
+
+  if (iconPacksLoadPromise && iconPacks.length === 0) {
+    statusElement.hidden = false;
+    statusElement.textContent = content.iconPacksLoading;
+    return;
+  }
+
+  if (iconPacks.length === 0) {
+    statusElement.hidden = false;
+    statusElement.textContent = content.iconPacksEmpty;
+    return;
+  }
+
+  statusElement.hidden = true;
+
+  iconPacks.forEach((pack) => {
+    const details = document.createElement("details");
+    details.className = "icon-pack-group";
+
+    const summary = document.createElement("summary");
+    summary.className = "icon-pack-summary";
+    summary.textContent = pack.name;
+    details.appendChild(summary);
+
+    const files = document.createElement("div");
+    files.className = "icon-pack-files";
+
+    if (pack.files.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "icon-pack-empty";
+      empty.textContent = content.iconPackFolderEmpty;
+      files.appendChild(empty);
+    } else {
+      pack.files.forEach((file) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "icon-pack-download";
+        button.dataset.downloadUrl = file.downloadUrl;
+        button.dataset.fileName = file.name;
+
+        const name = document.createElement("span");
+        name.className = "icon-pack-file-name";
+        name.textContent = file.name;
+
+        const meta = document.createElement("span");
+        meta.className = "icon-pack-file-meta";
+        meta.textContent = `${content.iconPackDownload}${file.sizeLabel ? ` · ${file.sizeLabel}` : ""}`;
+
+        button.append(name, meta);
+        files.appendChild(button);
+      });
+    }
+
+    details.appendChild(files);
+    listElement.appendChild(details);
+  });
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, {
+    headers: {
+      Accept: "application/vnd.github+json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return response.json();
+}
+
+async function loadIconPacks() {
+  if (iconPacksLoadPromise) {
+    return iconPacksLoadPromise;
+  }
+
+  iconPacksLoadFailed = false;
+  iconPacksLoadPromise = (async () => {
+    try {
+      const entries = await fetchJson(iconPacksRootUrl);
+      const directories = entries
+        .filter((entry) => entry.type === "dir")
+        .sort((left, right) => left.name.localeCompare(right.name));
+
+      iconPacks = await Promise.all(
+        directories.map(async (directory) => {
+          const files = await fetchJson(directory.url);
+          const dllFiles = files
+            .filter((file) => file.type === "file" && file.name.toLowerCase().endsWith(".dll") && file.download_url)
+            .sort((left, right) => left.name.localeCompare(right.name))
+            .map((file) => ({
+              name: file.name,
+              downloadUrl: file.download_url,
+              sizeLabel: formatFileSize(file.size)
+            }));
+
+          return {
+            name: directory.name,
+            files: dllFiles
+          };
+        })
+      );
+    } catch (error) {
+      iconPacksLoadFailed = true;
+      iconPacksLoadPromise = null;
+    } finally {
+      renderIconPacks();
+    }
+  })();
+
+  renderIconPacks();
+  return iconPacksLoadPromise;
+}
+
+async function downloadIconPackFile(button) {
+  const language = currentLanguage();
+  const content = translations[language];
+  const { downloadUrl, fileName } = button.dataset;
+  const originalLabel = button.querySelector(".icon-pack-file-meta");
+
+  if (!downloadUrl || !fileName || !originalLabel) {
+    return;
+  }
+
+  const originalText = originalLabel.textContent;
+
+  try {
+    button.disabled = true;
+    originalLabel.textContent = content.iconPackDownloading;
+
+    const response = await fetch(downloadUrl, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(objectUrl);
+  } catch (error) {
+    originalLabel.textContent = content.iconPacksUnavailable;
+  } finally {
+    button.disabled = false;
+    window.setTimeout(() => {
+      originalLabel.textContent = originalText;
+    }, 1200);
+  }
 }
 
 async function loadCurrentVersion() {
@@ -258,8 +464,56 @@ async function loadCurrentVersion() {
 const initialLanguage = normalizeLanguage(storedLanguage || browserLanguage);
 updatePageLanguage(initialLanguage);
 loadCurrentVersion();
+loadIconPacks();
 
 document.getElementById("language-switch").addEventListener("click", () => {
   const nextLanguage = document.documentElement.lang === "pt" ? "en" : "pt";
   updatePageLanguage(nextLanguage);
 });
+
+const iconPacksMenu = document.getElementById("icon-packs-menu");
+const iconPacksTrigger = document.getElementById("icon-packs-trigger");
+const iconPacksDropdown = document.getElementById("icon-packs-dropdown");
+const iconPacksList = document.getElementById("icon-packs-list");
+
+function setIconPacksOpen(isOpen) {
+  if (!iconPacksTrigger || !iconPacksDropdown) {
+    return;
+  }
+
+  iconPacksTrigger.setAttribute("aria-expanded", String(isOpen));
+  iconPacksDropdown.hidden = !isOpen;
+}
+
+if (iconPacksTrigger && iconPacksDropdown && iconPacksMenu) {
+  iconPacksTrigger.addEventListener("click", async () => {
+    const isOpen = iconPacksTrigger.getAttribute("aria-expanded") === "true";
+    setIconPacksOpen(!isOpen);
+    if (!isOpen) {
+      await loadIconPacks();
+    }
+  });
+
+  document.addEventListener("click", (event) => {
+    if (!iconPacksMenu.contains(event.target)) {
+      setIconPacksOpen(false);
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      setIconPacksOpen(false);
+    }
+  });
+}
+
+if (iconPacksList) {
+  iconPacksList.addEventListener("click", async (event) => {
+    const button = event.target.closest(".icon-pack-download");
+    if (!button) {
+      return;
+    }
+
+    await downloadIconPackFile(button);
+  });
+}
