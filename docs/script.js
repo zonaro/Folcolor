@@ -14,7 +14,7 @@ const translations = {
     heroPoint1: "900+ color options for Windows 7 through 11 folders",
     heroPoint2: "Import `.ico`, `.dll`, `.png`, `.jpg`, and `.jpeg` assets",
     heroPoint3: "No ads, no tracking, no network calls",
-    heroImageAlt: "Foldrion software icon",
+    heroImageAlt: "Foldrion folder customization preview",
     featuresKicker: "Why it helps",
     featuresTitle: "Spot the right folder instantly.",
     featuresText:
@@ -66,7 +66,7 @@ const translations = {
     heroPoint1: "Mais de 900 opcoes de cor para pastas do Windows 7 ao 11",
     heroPoint2: "Importe arquivos `.ico`, `.dll`, `.png`, `.jpg` e `.jpeg`",
     heroPoint3: "Sem anuncios, sem rastreamento, sem chamadas de rede",
-    heroImageAlt: "Icone do software Foldrion",
+    heroImageAlt: "Preview da personalizacao de pastas no Foldrion",
     featuresKicker: "Por que ajuda",
     featuresTitle: "Encontre a pasta certa num instante.",
     featuresText:
