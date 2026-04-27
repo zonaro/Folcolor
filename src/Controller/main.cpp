@@ -262,6 +262,9 @@ struct PickerVisibleItem
 static std::vector<PickerVisibleItem> gPickerVisibleItems;
 static std::wstring gPickerSearchQuery;
 static std::wstring gPickerTargetFolder;
+static std::wstring gSystemDefaultIconPath;
+static int gSystemDefaultIconIndex = 0;
+static BOOL gSystemDefaultIconSelected = FALSE;
 
 enum PickerColorCategoryIndex
 {
@@ -900,8 +903,8 @@ static void AddDllCategory(std::vector<PickerCategory>& out, const std::wstring&
 	cat.name = categoryName;
 	for (UINT i = 0; i < iconCount; i++)
 	{
-		WCHAR label[64];
-		swprintf_s(label, _countof(label), L"Icon %03u", i);
+		// Try to load icon name from String Resource; fallback to "Icon NNN"
+		std::wstring label = GetIconDisplayName(filePath.c_str(), i);
 
 		PickerItem item = {};
 		item.isBuiltIn = FALSE;
@@ -932,8 +935,8 @@ static void AddDllCategoryWithKnownIconCount(std::vector<PickerCategory>& out, c
 	cat.name = categoryName;
 	for (UINT i = 0; i < iconCount; i++)
 	{
-		WCHAR label[64];
-		swprintf_s(label, _countof(label), L"Icon %03u", i);
+		// Try to load icon name from String Resource; fallback to "Icon NNN"
+		std::wstring label = GetIconDisplayName(filePath.c_str(), i);
 
 		PickerItem item = {};
 		item.isBuiltIn = FALSE;
@@ -3359,6 +3362,54 @@ static LRESULT CALLBACK PickerItemListSubclassProc(HWND hWnd, UINT uMsg, WPARAM 
 		}
 		break;
 
+		case WM_RBUTTONUP:
+		{
+			// Handle right-click on icon item (rename)
+			POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
+			DWORD rowResult = (DWORD) SendMessageW(hWnd, LB_ITEMFROMPOINT, 0, MAKELPARAM(pt.x, pt.y));
+			int clickedRow = LOWORD(rowResult);
+			BOOL outsideListItem = HIWORD(rowResult);
+			
+			if (!outsideListItem && (clickedRow != LB_ERR))
+			{
+				// Get the visible item at this index
+				if ((size_t)clickedRow < gPickerVisibleItems.size())
+				{
+					const PickerVisibleItem& visItem = gPickerVisibleItems[clickedRow];
+					
+					// Only allow renaming custom icons (icons from the custom icons folder)
+					if ((size_t)visItem.categoryIndex < gPickerCategories.size() &&
+						(size_t)visItem.itemIndex < gPickerCategories[visItem.categoryIndex].items.size())
+					{
+						PickerItem& item = gPickerCategories[visItem.categoryIndex].items[visItem.itemIndex];
+						
+						// Only allow renaming DLLs in custom icons folder
+						if (!item.isBuiltIn && IsCustomIconDll(item.resourcePath.c_str()))
+						{
+							SendMessageW(hWnd, LB_SETCURSEL, (WPARAM) clickedRow, 0);
+							
+							// Show rename dialog
+							std::wstring newName;
+							if (ShowRenameIconDialog(hParent, item.label, newName))
+							{
+								item.label = newName;
+								
+								// Refresh the picker display
+								SendMessageW(hParent, WM_PICKER_DELETE_REQUEST, 0, 0);  // Triggers refresh
+								
+								// Redraw the listbox
+								SendMessageW(hWnd, LB_DELETESTRING, (WPARAM) clickedRow, 0);
+								SendMessageW(hWnd, LB_INSERTSTRING, (WPARAM) clickedRow, (LPARAM) newName.c_str());
+								SendMessageW(hWnd, LB_SETCURSEL, (WPARAM) clickedRow, 0);
+							}
+							return 0;
+						}
+					}
+				}
+			}
+		}
+		break;
+
 		case WM_NCDESTROY:
 			RemoveWindowSubclass(hWnd, PickerItemListSubclassProc, 1);
 			break;
@@ -3637,20 +3688,46 @@ static LRESULT CALLBACK PickerWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM
 						break;
 
 					const PickerItem& item = gPickerCategories[visibleItem.categoryIndex].items[visibleItem.itemIndex];
-					if (item.isBuiltIn)
+				
+					// Check if this is system default icon picker
+					if (gPickerTargetFolder == L"<system-default>")
 					{
-						// Apply built-in colors using the currently running EXE resources.
-						std::wstring exePath = GetCurrentExePath();
-						if (!exePath.empty())
-							SetFolderIconResource(exePath.c_str(), item.builtInOffset + item.builtInIndex, (LPWSTR) gPickerTargetFolder.c_str());
+						// Store result in global variables for system default icon
+						if (item.isBuiltIn)
+						{
+							std::wstring exePath = GetCurrentExePath();
+							if (!exePath.empty())
+							{
+								gSystemDefaultIconPath = exePath;
+								gSystemDefaultIconIndex = item.builtInOffset + item.builtInIndex;
+							}
+						}
 						else
-							SetFolderColor(item.builtInIndex, (LPWSTR) gPickerTargetFolder.c_str());
+						{
+							gSystemDefaultIconPath = item.resourcePath;
+							gSystemDefaultIconIndex = item.resourceIndex;
+						}
+						gSystemDefaultIconSelected = TRUE;
+						DestroyWindow(hWnd);
 					}
 					else
-						SetFolderIconResource(item.resourcePath.c_str(), item.resourceIndex, (LPWSTR) gPickerTargetFolder.c_str());
+					{
+						// Original per-folder icon setting
+						if (item.isBuiltIn)
+						{
+							// Apply built-in colors using the currently running EXE resources.
+							std::wstring exePath = GetCurrentExePath();
+							if (!exePath.empty())
+								SetFolderIconResource(exePath.c_str(), item.builtInOffset + item.builtInIndex, (LPWSTR) gPickerTargetFolder.c_str());
+							else
+								SetFolderColor(item.builtInIndex, (LPWSTR) gPickerTargetFolder.c_str());
+						}
+						else
+							SetFolderIconResource(item.resourcePath.c_str(), item.resourceIndex, (LPWSTR) gPickerTargetFolder.c_str());
 
-					ResetWindowsIconCache();
-					DestroyWindow(hWnd);
+						ResetWindowsIconCache();
+						DestroyWindow(hWnd);
+					}
 				}
 				break;
 
@@ -3866,6 +3943,87 @@ static int ShowFolderIconPicker(LPCWSTR folderPath)
 	}
 
 	return EXIT_SUCCESS;
+}
+
+/**
+ * Show the system default icon picker window (no folder target needed).
+ * Result is stored in gSystemDefaultIconPath and gSystemDefaultIconIndex.
+ */
+static int ShowSystemDefaultIconPicker()
+{
+	gSystemDefaultIconPath.clear();
+	gSystemDefaultIconIndex = 0;
+	gSystemDefaultIconSelected = FALSE;
+	gPickerTargetFolder = L"<system-default>";
+	gPickerSearchQuery.clear();
+	gPickerVisibleItems.clear();
+	BuildPickerCategories(gPickerCategories);
+
+	WNDCLASSW wc = {};
+	wc.lpfnWndProc = PickerWndProc;
+	wc.hInstance = GetModuleHandleW(NULL);
+	wc.lpszClassName = L"FoldrionSystemDefaultIconPicker";
+	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wc.hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+	RegisterClassW(&wc);
+
+	HWND hWnd = CreateWindowExW(
+		WS_EX_APPWINDOW,
+		wc.lpszClassName,
+		L"Set System Default Folder Icon",
+		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+		CW_USEDEFAULT, CW_USEDEFAULT, 1260, 480,
+		NULL, NULL, wc.hInstance, NULL);
+
+	if (!hWnd)
+		return EXIT_FAILURE;
+
+	ShowWindow(hWnd, SW_SHOW);
+	UpdateWindow(hWnd);
+
+	MSG msg = {};
+	while (GetMessage(&msg, NULL, 0, 0) > 0)
+	{
+		if (msg.message == WM_KEYDOWN)
+		{
+			BOOL handled = FALSE;
+			HWND hSearch = GetDlgItem(hWnd, IDC_PICKER_SEARCH);
+
+			if ((msg.wParam == VK_F2) ||
+				(msg.wParam == 'F' && (GetKeyState(VK_CONTROL) & 0x8000)))
+			{
+				if (hSearch)
+				{
+					SetFocus(hSearch);
+					SendMessageW(hSearch, EM_SETSEL, 0, -1);
+				}
+				handled = TRUE;
+			}
+			else if (msg.wParam == VK_ESCAPE)
+			{
+				if (hSearch && (GetFocus() == hSearch))
+				{
+					SetWindowTextW(hSearch, L"");
+					KillTimer(hWnd, PICKER_SEARCH_DEBOUNCE_TIMER_ID);
+					ApplyPickerSearchNow(hWnd);
+				}
+				else
+				{
+					DestroyWindow(hWnd);
+				}
+				handled = TRUE;
+			}
+
+			if (handled)
+				continue;
+		}
+
+		TranslateMessage(&msg);
+		DispatchMessage(&msg);
+	}
+
+	return gSystemDefaultIconSelected ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
 static void OpenLinkUrl()
@@ -4212,6 +4370,109 @@ static BOOL PromptPackageDllName(HWND hWnd, const std::wstring& initialDir,
 
 
 /**
+ * Get path to the custom icon names file in the icons folder.
+ */
+static std::wstring GetCustomIconNamesPath()
+{
+	std::wstring iconsDir;
+	if (isInstalled)
+	{
+		iconsDir = std::wstring(myPathGlobal) + L"icons";
+	}
+	else
+	{
+		WCHAR exeDir[MAX_PATH] = {};
+		if (GetModuleFileNameW(NULL, exeDir, _countof(exeDir)))
+		{
+			WCHAR* lastSlash = wcsrchr(exeDir, L'\\');
+			if (lastSlash)
+				*lastSlash = L'\0';
+		}
+		iconsDir = exeDir;
+	}
+	return iconsDir + L"\\.custom-icon-names";
+}
+
+
+/**
+ * Load an icon name from a String Resource in a DLL.
+ * String Resources are stored in blocks of 16 strings, with IDs following:
+ * IDS_ICON_0 = 100, IDS_ICON_1 = 101, etc.
+ * Returns the string if found, otherwise empty string.
+ */
+static std::wstring LoadIconNameFromDll(LPCWSTR dllPath, UINT iconIndex)
+{
+	WCHAR buffer[256] = {};
+	HMODULE hDll = LoadLibraryExW(dllPath, NULL, LOAD_LIBRARY_AS_DATAFILE);
+	if (!hDll)
+		return std::wstring();
+
+	// String Resource IDs start at 100 for icon 0
+	UINT stringId = 100 + iconIndex;
+	int loaded = LoadStringW(hDll, stringId, buffer, _countof(buffer) - 1);
+	FreeLibrary(hDll);
+
+	if (loaded > 0)
+		return std::wstring(buffer);
+	return std::wstring();
+}
+
+
+/**
+ * Get the icon name to display: try String Resource first,
+ * then fallback to "Icon NNN".
+ */
+static std::wstring GetIconDisplayName(LPCWSTR dllPath, UINT iconIndex)
+{
+	// Try loading from String Resource first
+	std::wstring name = LoadIconNameFromDll(dllPath, iconIndex);
+	if (!name.empty())
+		return name;
+
+	// Fallback to "Icon NNN" format
+	WCHAR fallback[64] = {};
+	swprintf_s(fallback, _countof(fallback), L"Icon %03u", iconIndex);
+	return std::wstring(fallback);
+}
+
+
+/**
+ * Check if a DLL path is in the custom icons folder.
+ */
+static BOOL IsCustomIconDll(LPCWSTR dllPath)
+{
+	if (!dllPath || !dllPath[0])
+		return FALSE;
+
+	std::wstring iconsDir;
+	if (isInstalled)
+	{
+		iconsDir = std::wstring(myPathGlobal) + L"icons";
+	}
+	else
+	{
+		WCHAR exeDir[MAX_PATH] = {};
+		if (GetModuleFileNameW(NULL, exeDir, _countof(exeDir)))
+		{
+			WCHAR* lastSlash = wcsrchr(exeDir, L'\\');
+			if (lastSlash)
+				*lastSlash = L'\0';
+		}
+		iconsDir = exeDir;
+	}
+
+	// Normalize both paths for comparison
+	WCHAR normalizedDll[MAX_PATH] = {};
+	WCHAR normalizedIconsDir[MAX_PATH] = {};
+	GetFullPathNameW(dllPath, _countof(normalizedDll), normalizedDll, NULL);
+	GetFullPathNameW(iconsDir.c_str(), _countof(normalizedIconsDir), normalizedIconsDir, NULL);
+
+	// Check if dll is in the icons directory
+	return (_wcsnicmp(normalizedDll, normalizedIconsDir, wcslen(normalizedIconsDir)) == 0);
+}
+
+
+/**
  * Package selected .ico/.png/.jpg files into a single DLL that exposes each
  * icon as an RT_GROUP_ICON resource, compatible with ExtractIconExW.
  * The DLL is saved to the icons subfolder when installed, or to the exe
@@ -4379,6 +4640,10 @@ static void PackageIconsIntoDll(HWND hWnd)
 			continue;
 		}
 
+		// Extract the icon name from the source file (without extension)
+		std::wstring iconName = RemoveExtensionCopy(srcPath);
+		iconName = SanitizeIconFileStem(iconName);
+
 		std::vector<BYTE> groupData;
 		UINT added = PackOneIcoGroup(hUpdate, nextGroupId, icoData, nextIconId, groupData);
 		if ((added == 0) || groupData.empty())
@@ -4395,6 +4660,19 @@ static void PackageIconsIntoDll(HWND hWnd)
 			failedCount++;
 			failedNames.push_back(PathFindFileNameW(srcPath.c_str()));
 			continue;
+		}
+
+		// Add String Resource with icon name (IDS_ICON_0 = 100, IDS_ICON_1 = 101, etc.)
+		if (!iconName.empty())
+		{
+			UINT stringId = 100 + (nextGroupId - 1);
+			DWORD nameSize = (DWORD)((iconName.size() + 1) * sizeof(WCHAR));
+			if (!UpdateResourceW(hUpdate, (LPCWSTR)RT_STRING, MAKEINTRESOURCEW(stringId),
+				MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+				const_cast<WCHAR*>(iconName.c_str()), nameSize))
+			{
+				// String resource update failed, but continue (icon still works with fallback name)
+			}
 		}
 
 		nextGroupId++;
@@ -4719,6 +4997,29 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 }
 
 
+static std::string DownloadVersionFile()
+{
+    HINTERNET hInternet = InternetOpenA("Foldrion", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    if (!hInternet) return "";
+
+    HINTERNET hConnect = InternetOpenUrlA(hInternet, "http://github.com/zonaro/foldrion/updated.txt", NULL, 0, INTERNET_FLAG_RELOAD, 0);
+    if (!hConnect) {
+        InternetCloseHandle(hInternet);
+        return "";
+    }
+
+    std::string content;
+    char buffer[1024];
+    DWORD bytesRead;
+    while (InternetReadFile(hConnect, buffer, sizeof(buffer), &bytesRead) && bytesRead > 0) {
+        content.append(buffer, bytesRead);
+    }
+
+    InternetCloseHandle(hConnect);
+    InternetCloseHandle(hInternet);
+    return content;
+}
+
 static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	switch (uMsg)
@@ -4726,7 +5027,9 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 		case WM_INITDIALOG:
 		{
 			// Add info to caption
-			SetWindowTextA(hWnd, PROJECT_NAME " " APP_VERSION " Built: " __DATE__);
+			std::string versionStr = GetAppVersion();
+			std::string title = std::string(PROJECT_NAME) + " " + versionStr + " Built: " + __DATE__;
+			SetWindowTextA(hWnd, title.c_str());
 
 			// Set dialog icon
 			HICON hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
@@ -4917,6 +5220,67 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 				}
 				break;
 
+				case IDC_SET_DEFAULT_ICON:
+				{
+				// Open the system default icon picker
+				if (ShowSystemDefaultIconPicker() == EXIT_SUCCESS)
+				{
+					if (!gSystemDefaultIconPath.empty())
+					{
+						SetSystemDefaultFolderIcon(gSystemDefaultIconPath.c_str(), gSystemDefaultIconIndex);
+						MessageBoxA(hWnd, "System default folder icon set. You may want to restart Explorer to see changes.", "Success:", MB_OK | MB_ICONINFORMATION);
+					}
+				}
+				return (INT_PTR) TRUE;
+			}
+			break;
+
+			case IDC_RESTORE_DEFAULT_ICON:
+			{
+				RestoreSystemDefaultFolderIcon();
+				MessageBoxA(hWnd, "System default folder icon restored.", "Success:", MB_OK | MB_ICONINFORMATION);
+				return (INT_PTR) TRUE;
+			}
+			break;
+
+			case IDC_RESTART_EXPLORER:
+			{
+				// Restart Windows Explorer
+				HWND hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
+				if (hTaskbar)
+				{
+					PostMessage(hTaskbar, WM_COMMAND, 0x7402, 0); // Undocumented command to restart explorer
+				}
+				else
+				{
+					// Fallback: use shell execute to restart explorer
+					SHELLEXECUTEINFOW sei = { sizeof(sei) };
+					sei.lpVerb = L"runas";
+					sei.lpFile = L"cmd.exe";
+					sei.lpParameters = L"/c taskkill /f /im explorer.exe && start explorer.exe";
+					sei.nShow = SW_HIDE;
+					ShellExecuteExW(&sei);
+				}
+				MessageBoxA(hWnd, "Explorer restarted.", "Success:", MB_OK | MB_ICONINFORMATION);
+				return (INT_PTR) TRUE;
+			}
+			break;
+
+			case IDC_CHECK_UPDATES:
+			{
+				std::string remoteVersion = DownloadVersionFile();
+				std::string localVersion = GetAppVersion();
+				if (remoteVersion.empty()) {
+					MessageBoxA(hWnd, "Não foi possível verificar atualizações.", "Erro:", MB_OK | MB_ICONERROR);
+				} else if (remoteVersion == localVersion) {
+					MessageBoxA(hWnd, "Você já tem a versão mais recente.", "Atualização:", MB_OK | MB_ICONINFORMATION);
+				} else {
+					std::string msg = "Nova versão disponível: " + remoteVersion;
+					MessageBoxA(hWnd, msg.c_str(), "Atualização:", MB_OK | MB_ICONINFORMATION);
+				}
+			}
+			break;
+
 			};
 		}
 		break;
@@ -4973,6 +5337,20 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
+	if (pCmdLine && wcsstr(pCmdLine, L"--version")) {
+		std::string version = GetAppVersion();
+		// Get current working directory and write version to file
+		wchar_t szPath[MAX_PATH];
+		GetCurrentDirectoryW(MAX_PATH, szPath);
+		wcscat_s(szPath, MAX_PATH, L"\\version.txt");
+		FILE* versionFile = _wfopen(szPath, L"w");
+		if (versionFile) {
+			fprintf(versionFile, "%s", version.c_str());
+			fclose(versionFile);
+		}
+		return EXIT_SUCCESS;
+	}
+
 	BOOL shellInvocation = (pCmdLine && ((wcsstr(pCmdLine, L"--folder") != NULL) || (wcsstr(pCmdLine, L"" COMMAND_FOLDER) != NULL)));
 
 	// Should only be one instance running

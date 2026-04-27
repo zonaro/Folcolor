@@ -462,3 +462,37 @@ void ResetWindowsIconCache()
 	DWORD_PTR smResult;
 	SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM) L"Software\\Classes", SMTO_ABORTIFHUNG, 5000, &smResult);
 }
+
+
+// Set the system-wide default folder icon by modifying the Shell Icons registry key
+void SetSystemDefaultFolderIcon(LPCWSTR iconResourcePath, int iconIndex)
+{
+	HKEY hKey;
+	LSTATUS status = RegCreateKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Icons", 0, NULL, 0, KEY_WRITE, NULL, &hKey, NULL);
+	if (status != ERROR_SUCCESS)
+		return;
+
+	WCHAR iconPath[1024];
+	swprintf_s(iconPath, _countof(iconPath), L"%s,%d", iconResourcePath, iconIndex);
+
+	status = RegSetValueExW(hKey, L"3", 0, REG_SZ, (const BYTE*)iconPath, (DWORD)((wcslen(iconPath) + 1) * sizeof(WCHAR)));
+	RegCloseKey(hKey);
+
+	if (status == ERROR_SUCCESS)
+		ResetWindowsIconCache();
+}
+
+
+// Restore the system-wide default folder icon by removing the Shell Icons registry key
+void RestoreSystemDefaultFolderIcon()
+{
+	HKEY hKey;
+	LSTATUS status = RegOpenKeyExW(HKEY_CURRENT_USER, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Shell Icons", 0, KEY_WRITE, &hKey);
+	if (status != ERROR_SUCCESS)
+		return;
+
+	RegDeleteValueW(hKey, L"3");
+	RegCloseKey(hKey);
+
+	ResetWindowsIconCache();
+}

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Foldrion | Color Your Windows Folders</title>
+  <meta
+    name="description"
+    content="Foldrion is a free open source Windows app to customize folder icons with colors, images, and icon packs."
+  >
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+    rel="stylesheet"
+  >
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="Foldrion home">
+        <span class="brand-mark"></span>
+        <span class="brand-text">Foldrion</span>
+      </a>
+      <div class="topbar-actions">
+        <a
+          class="ghost-link"
+          href="https://github.com/zonaro/Foldrion"
+          target="_blank"
+          rel="noreferrer"
+          data-i18n="navGithub"
+        >GitHub</a>
+        <button class="language-switch" id="language-switch" type="button" aria-live="polite">
+          <span data-i18n="languageButton">PT</span>
+        </button>
+      </div>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow" data-i18n="eyebrow">Open source Windows folder customization</p>
+          <h1 data-i18n="heroTitle">Give every folder its own color, icon, and personality.</h1>
+          <p class="hero-text" data-i18n="heroText">
+            Foldrion helps you organize Windows folders with fast visual recognition using colors,
+            icon packs, and image overlays.
+          </p>
+          <div class="hero-actions">
+            <a
+              class="button button-primary"
+              href="https://raw.githubusercontent.com/zonaro/Foldrion/refs/heads/main/src/Controller/Win32/Release/Foldrion.exe"
+              data-i18n="downloadCta"
+            >Download latest release</a>
+            <a
+              class="button button-secondary"
+              href="https://github.com/zonaro/Foldrion"
+              target="_blank"
+              rel="noreferrer"
+              data-i18n="sourceCta"
+            >View source</a>
+          </div>
+          <ul class="hero-points">
+            <li data-i18n="heroPoint1">900+ color options for Windows 7 through 11 folders</li>
+            <li data-i18n="heroPoint2">Import `.ico`, `.dll`, `.png`, `.jpg`, and `.jpeg` assets</li>
+            <li data-i18n="heroPoint3">No ads, no tracking, no network calls</li>
+          </ul>
+        </div>
+
+        <div class="hero-visual">
+          <div class="visual-card">
+            <img
+              src="../readme_assets/before_after_header_trans_img_s.png"
+              alt="Foldrion folder customization preview"
+              data-i18n-alt="heroImageAlt"
+            >
+          </div>
+        </div>
+      </section>
+
+      <section class="info-grid">
+        <article class="info-card">
+          <p class="card-kicker" data-i18n="featuresKicker">Why it helps</p>
+          <h2 data-i18n="featuresTitle">Spot the right folder instantly.</h2>
+          <p data-i18n="featuresText">
+            Instead of scanning a long list of names, you can assign meaning through color,
+            branding, or custom image overlays.
+          </p>
+        </article>
+        <article class="info-card">
+          <p class="card-kicker" data-i18n="securityKicker">Security first</p>
+          <h2 data-i18n="securityTitle">A small native tool with a minimal surface area.</h2>
+          <p data-i18n="securityText">
+            Foldrion is designed as a single executable with embedded resources and no unnecessary
+            online behavior.
+          </p>
+        </article>
+      </section>
+
+      <section class="features">
+        <div class="section-heading">
+          <p class="eyebrow" data-i18n="sectionEyebrow">Core features</p>
+          <h2 data-i18n="sectionTitle">Built for power users, artists, and tidy desktops.</h2>
+        </div>
+        <div class="feature-list">
+          <article class="feature-item">
+            <span class="feature-number">01</span>
+            <h3 data-i18n="feature1Title">Huge color library</h3>
+            <p data-i18n="feature1Text">
+              Choose from more than 900 folder color variations across multiple Windows styles.
+            </p>
+          </article>
+          <article class="feature-item">
+            <span class="feature-number">02</span>
+            <h3 data-i18n="feature2Title">Bring your own icons</h3>
+            <p data-i18n="feature2Text">
+              Import icon files, image files, and DLL packs, then organize them inside the app.
+            </p>
+          </article>
+          <article class="feature-item">
+            <span class="feature-number">03</span>
+            <h3 data-i18n="feature3Title">Create custom combinations</h3>
+            <p data-i18n="feature3Text">
+              Overlay images on colored folders to generate combinations like branded or symbolic
+              folders.
+            </p>
+          </article>
+          <article class="feature-item">
+            <span class="feature-number">04</span>
+            <h3 data-i18n="feature4Title">Package icon collections</h3>
+            <p data-i18n="feature4Text">
+              Export many icons as a single DLL pack for easier reuse and sharing.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="steps">
+        <div class="section-heading">
+          <p class="eyebrow" data-i18n="stepsEyebrow">Quick start</p>
+          <h2 data-i18n="stepsTitle">Three steps to start customizing.</h2>
+        </div>
+        <ol class="steps-list">
+          <li data-i18n="step1">Download `Foldrion.exe`.</li>
+          <li data-i18n="step2">Run the app and click Install.</li>
+          <li data-i18n="step3">Right-click a folder and choose Customization > Customize Folder.</li>
+        </ol>
+      </section>
+
+      <section class="cta-panel">
+        <div>
+          <p class="eyebrow" data-i18n="ctaEyebrow">Free forever</p>
+          <h2 data-i18n="ctaTitle">Use it, inspect it, and adapt it.</h2>
+          <p data-i18n="ctaText">
+            Foldrion is MIT licensed and built for people who want control over their Windows
+            workspace.
+          </p>
+        </div>
+        <a
+          class="button button-primary"
+          href="https://github.com/zonaro/Foldrion"
+          target="_blank"
+          rel="noreferrer"
+          data-i18n="ctaButton"
+        >Open the repository</a>
+      </section>
+    </main>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
