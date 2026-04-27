@@ -74,12 +74,14 @@
 
     .workspace {
       display: grid;
-      grid-template-columns: 220px 440px 1fr;
+      grid-template-columns: minmax(284px, 320px) minmax(220px, 260px) minmax(0, 1fr);
       gap: 16px;
       padding: 16px;
+      align-items: start;
     }
 
     .card {
+      min-width: 0;
       border: 1px solid var(--border);
       border-radius: 12px;
       background: var(--panel-2);
