@@ -78,6 +78,58 @@ static BOOL isClicking = FALSE, isVisited = FALSE;
 static COLORREF urlColor = RGB(0, 102, 204);
 static HBRUSH gDialogBackgroundBrush = NULL;
 static HBRUSH gDialogButtonBrush = NULL;
+
+static const char* kVersionBlobUrl = "https://github.com/zonaro/Foldrion/blob/main/src/Controller/Win32/Release/version.txt";
+static const char* kVersionRawUrl = "https://raw.githubusercontent.com/zonaro/Foldrion/main/src/Controller/Win32/Release/version.txt";
+static const wchar_t* kDownloadExeRawUrl = L"https://raw.githubusercontent.com/zonaro/Foldrion/main/src/Controller/Win32/Release/Foldrion.exe";
+
+static std::string TrimAsciiWhitespace(const std::string& value)
+{
+	size_t start = 0;
+	while (start < value.size() && isspace(static_cast<unsigned char>(value[start])))
+		++start;
+
+	size_t end = value.size();
+	while (end > start && isspace(static_cast<unsigned char>(value[end - 1])))
+		--end;
+
+	return value.substr(start, end - start);
+}
+
+static bool LooksLikeVersionString(const std::string& value)
+{
+	return !value.empty() && value[0] == 'v';
+}
+
+static std::string DownloadTextUrl(const char* url)
+{
+	HINTERNET hInternet = InternetOpenA("Foldrion", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+	if (!hInternet)
+		return "";
+
+	HINTERNET hConnect = InternetOpenUrlA(
+		hInternet,
+		url,
+		NULL,
+		0,
+		INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_PRAGMA_NOCACHE,
+		0);
+	if (!hConnect)
+	{
+		InternetCloseHandle(hInternet);
+		return "";
+	}
+
+	std::string content;
+	char buffer[1024];
+	DWORD bytesRead = 0;
+	while (InternetReadFile(hConnect, buffer, sizeof(buffer), &bytesRead) && bytesRead > 0)
+		content.append(buffer, bytesRead);
+
+	InternetCloseHandle(hConnect);
+	InternetCloseHandle(hInternet);
+	return content;
+}
 static COLORREF gDialogBackgroundColor = RGB(255, 255, 255);
 static COLORREF gDialogButtonColor = RGB(240, 240, 240);
 static COLORREF gDialogTextColor = RGB(0, 0, 0);
@@ -5491,25 +5543,24 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 
 static std::string DownloadVersionFile()
 {
-    HINTERNET hInternet = InternetOpenA("Foldrion", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
-    if (!hInternet) return "";
+	std::string content = TrimAsciiWhitespace(DownloadTextUrl(kVersionBlobUrl));
+	if (LooksLikeVersionString(content))
+		return content;
 
-    HINTERNET hConnect = InternetOpenUrlA(hInternet, "http://github.com/zonaro/foldrion/version.txt", NULL, 0, INTERNET_FLAG_RELOAD, 0);
-    if (!hConnect) {
-        InternetCloseHandle(hInternet);
-        return "";
-    }
+	content = TrimAsciiWhitespace(DownloadTextUrl(kVersionRawUrl));
+	if (LooksLikeVersionString(content))
+		return content;
 
-    std::string content;
-    char buffer[1024];
-    DWORD bytesRead;
-    while (InternetReadFile(hConnect, buffer, sizeof(buffer), &bytesRead) && bytesRead > 0) {
-        content.append(buffer, bytesRead);
-    }
+	return "";
+}
 
-    InternetCloseHandle(hConnect);
-    InternetCloseHandle(hInternet);
-    return content;
+static void OpenDownloadUrl(HWND hWnd)
+{
+	HINSTANCE openResult = ShellExecuteW(hWnd, L"open", kDownloadExeRawUrl, NULL, NULL, SW_SHOWNORMAL);
+	if ((INT_PTR)openResult <= 32)
+	{
+		MessageBoxA(hWnd, "Nao foi possivel abrir o link de download.", "Erro:", MB_OK | MB_ICONERROR);
+	}
 }
 
 static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
@@ -5783,8 +5834,10 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 				} else if (remoteVersion == localVersion) {
 					MessageBoxA(hWnd, "Você já tem a versão mais recente.", "Atualização:", MB_OK | MB_ICONINFORMATION);
 				} else {
-					std::string msg = "Nova versão disponível: " + remoteVersion;
-					MessageBoxA(hWnd, msg.c_str(), "Atualização:", MB_OK | MB_ICONINFORMATION);
+					std::string msg = "Nova versão disponível: " + remoteVersion + "\n\nDeseja fazer o download agora?";
+					int result = MessageBoxA(hWnd, msg.c_str(), "Atualização:", MB_YESNO | MB_ICONINFORMATION);
+					if (result == IDYES)
+						OpenDownloadUrl(hWnd);
 				}
 			}
 			break;
