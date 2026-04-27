@@ -52,7 +52,7 @@ const translations = {
     installerKicker: "Installer",
     installerTitle: "Install, refresh, and manage shell integration.",
     installerText:
-      "The native installer window keeps all maintenance actions in one place: install, icon cache refresh, package export, and update checks.",
+      "The native installer window keeps all maintenance actions in one place: install or uninstall, updates, opening the install folder, packaging icons, and icon re-scans.",
     installerDemoCaption:
       "Windows shell integration, icon cache tools, and folder icon workflows in one place.",
     installerIconAlt: "Foldrion installer icon preview",
@@ -144,7 +144,7 @@ const translations = {
     installerKicker: "Instalador",
     installerTitle: "Instale, atualize e gerencie a integração com o shell.",
     installerText:
-      "A janela nativa do instalador reúne as ações de manutenção em um só lugar: instalar, atualizar cache de ícones, exportar pacotes e verificar atualizações.",
+      "A janela nativa do instalador reúne as ações de manutenção em um só lugar: instalar ou desinstalar, atualizar, abrir a pasta de instalação, empacotar ícones e reescanear ícones.",
     installerDemoCaption:
       "Integração com o shell do Windows, ferramentas de cache de ícones e fluxos de personalização em um só lugar.",
     installerIconAlt: "Preview do ícone do instalador do Foldrion",

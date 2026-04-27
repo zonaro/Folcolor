@@ -239,27 +239,27 @@ static BOOL AreSamePath(LPCWSTR leftPath, LPCWSTR rightPath)
  */
 static void UpdateInstallDependentControls(HWND hWnd)
 {
-	HWND hReinstall = GetDlgItem(hWnd, IDC_REINSTALL);
+	HWND hRescan = GetDlgItem(hWnd, IDC_REINSTALL);
 	HWND hCheckUpdates = GetDlgItem(hWnd, IDC_CHECK_UPDATES);
-	if (!hReinstall && !hCheckUpdates)
+	if (!hRescan && !hCheckUpdates)
 		return;
 
 	if (!isInstalled)
 	{
-		if (hReinstall)
+		if (hRescan)
 		{
-			SetWindowTextA(hReinstall, "Re-install");
-			EnableWindow(hReinstall, FALSE);
+			SetWindowTextA(hRescan, "Re-scan Icons");
+			EnableWindow(hRescan, FALSE);
 		}
 		if (hCheckUpdates)
-			SetWindowTextA(hCheckUpdates, "Check Updates");
+			SetWindowTextA(hCheckUpdates, "Check for Updates");
 		return;
 	}
 
-	if (hReinstall)
+	if (hRescan)
 	{
-		SetWindowTextA(hReinstall, "Re-scan Icons");
-		EnableWindow(hReinstall, TRUE);
+		SetWindowTextA(hRescan, "Re-scan Icons");
+		EnableWindow(hRescan, TRUE);
 	}
 
 	if (hCheckUpdates)
@@ -267,7 +267,7 @@ static void UpdateInstallDependentControls(HWND hWnd)
 		if (isRunningOutsideInstallFolder)
 			SetWindowTextA(hCheckUpdates, "Update");
 		else
-			SetWindowTextA(hCheckUpdates, "Check Updates");
+			SetWindowTextA(hCheckUpdates, "Check for Updates");
 	}
 }
 
@@ -5940,7 +5940,7 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 				lf.lfWeight = FW_MEDIUM;
 				HFONT buttonFont = CreateFontIndirect(&lf);
 				SendMessageA(GetDlgItem(hWnd, IDC_INSTALL_UNINSTALL), WM_SETFONT, WPARAM(buttonFont), TRUE);
-				SendMessageA(GetDlgItem(hWnd, IDC_REFRESH), WM_SETFONT, WPARAM(buttonFont), TRUE);
+				SendMessageA(GetDlgItem(hWnd, IDC_CHECK_UPDATES), WM_SETFONT, WPARAM(buttonFont), TRUE);
 				SendMessageA(GetDlgItem(hWnd, IDC_REINSTALL), WM_SETFONT, WPARAM(buttonFont), TRUE);
 				SendMessageA(GetDlgItem(hWnd, IDC_OPEN_INSTALL_FOLDER), WM_SETFONT, WPARAM(buttonFont), TRUE);
 				SendMessageA(GetDlgItem(hWnd, IDC_PACKAGE_ICONS), WM_SETFONT, WPARAM(buttonFont), TRUE);
@@ -6023,14 +6023,6 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 					MessageBoxA(hWnd, "Unable to start the icon cache re-scan.", "Error:", (MB_OK | MB_ICONERROR));
 				UpdateInstallDependentControls(hWnd);
 			}
-			return (INT_PTR)TRUE;
-		}
-		break;
-
-		// Refresh Windows icon cache DB
-		case IDC_REFRESH:
-		{
-			ResetWindowsIconCache();
 			return (INT_PTR)TRUE;
 		}
 		break;
