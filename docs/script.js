@@ -8,10 +8,13 @@ const translations = {
       "Foldrion helps you organize Windows folders with fast visual recognition using colors, icon packs, and image overlays.",
     downloadCta: "Download latest release",
     sourceCta: "View source",
+    versionLabel: "Current version:",
+    versionLoading: "Loading...",
+    versionUnavailable: "Unavailable",
     heroPoint1: "900+ color options for Windows 7 through 11 folders",
     heroPoint2: "Import `.ico`, `.dll`, `.png`, `.jpg`, and `.jpeg` assets",
     heroPoint3: "No ads, no tracking, no network calls",
-    heroImageAlt: "Foldrion folder customization preview",
+    heroImageAlt: "Foldrion software icon",
     featuresKicker: "Why it helps",
     featuresTitle: "Spot the right folder instantly.",
     featuresText:
@@ -57,10 +60,13 @@ const translations = {
       "O Foldrion ajuda voce a organizar pastas no Windows com reconhecimento visual rapido usando cores, pacotes de icones e sobreposicoes de imagem.",
     downloadCta: "Baixar a versao mais recente",
     sourceCta: "Ver codigo-fonte",
+    versionLabel: "Versao atual:",
+    versionLoading: "Carregando...",
+    versionUnavailable: "Indisponivel",
     heroPoint1: "Mais de 900 opcoes de cor para pastas do Windows 7 ao 11",
     heroPoint2: "Importe arquivos `.ico`, `.dll`, `.png`, `.jpg` e `.jpeg`",
     heroPoint3: "Sem anuncios, sem rastreamento, sem chamadas de rede",
-    heroImageAlt: "Preview da personalizacao de pastas no Foldrion",
+    heroImageAlt: "Icone do software Foldrion",
     featuresKicker: "Por que ajuda",
     featuresTitle: "Encontre a pasta certa num instante.",
     featuresText:
@@ -102,10 +108,34 @@ const translations = {
 const supportedLanguages = ["en", "pt"];
 const storedLanguage = window.localStorage.getItem("foldrion-language");
 const browserLanguage = (navigator.languages && navigator.languages[0]) || navigator.language || "en";
+const versionUrl = "https://raw.githubusercontent.com/zonaro/Foldrion/refs/heads/main/src/Controller/Win32/Release/version.txt";
+let currentVersion = null;
+let versionLoadFailed = false;
 
 function normalizeLanguage(languageCode) {
   const shortCode = languageCode.toLowerCase().slice(0, 2);
   return supportedLanguages.includes(shortCode) ? shortCode : "en";
+}
+
+function updateVersionText(language) {
+  const versionElement = document.getElementById("current-version");
+  const content = translations[language];
+
+  if (!versionElement) {
+    return;
+  }
+
+  if (currentVersion) {
+    versionElement.textContent = currentVersion;
+    return;
+  }
+
+  if (versionLoadFailed) {
+    versionElement.textContent = content.versionUnavailable;
+    return;
+  }
+
+  versionElement.textContent = content.versionLoading;
 }
 
 function updatePageLanguage(language) {
@@ -133,11 +163,35 @@ function updatePageLanguage(language) {
     }
   });
 
+  updateVersionText(language);
   window.localStorage.setItem("foldrion-language", language);
+}
+
+async function loadCurrentVersion() {
+  const versionElement = document.getElementById("current-version");
+
+  if (!versionElement) {
+    return;
+  }
+
+  try {
+    const response = await fetch(versionUrl, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const versionText = (await response.text()).trim();
+    currentVersion = versionText || null;
+  } catch (error) {
+    versionLoadFailed = true;
+  }
+
+  updateVersionText(document.documentElement.lang || "en");
 }
 
 const initialLanguage = normalizeLanguage(storedLanguage || browserLanguage);
 updatePageLanguage(initialLanguage);
+loadCurrentVersion();
 
 document.getElementById("language-switch").addEventListener("click", () => {
   const nextLanguage = document.documentElement.lang === "pt" ? "en" : "pt";

@@ -14,13 +14,14 @@
     href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
     rel="stylesheet"
   >
+  <link rel="icon" type="image/png" href="icon.png">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="page-shell">
     <header class="topbar">
       <a class="brand" href="#top" aria-label="Foldrion home">
-        <span class="brand-mark"></span>
+        <img class="brand-mark" src="icon.png" alt="Foldrion icon">
         <span class="brand-text">Foldrion</span>
       </a>
       <div class="topbar-actions">
@@ -60,6 +61,10 @@
               data-i18n="sourceCta"
             >View source</a>
           </div>
+          <p class="version-badge">
+            <span data-i18n="versionLabel">Current version:</span>
+            <strong id="current-version" data-i18n="versionLoading">Loading...</strong>
+          </p>
           <ul class="hero-points">
             <li data-i18n="heroPoint1">900+ color options for Windows 7 through 11 folders</li>
             <li data-i18n="heroPoint2">Import `.ico`, `.dll`, `.png`, `.jpg`, and `.jpeg` assets</li>
@@ -70,10 +75,12 @@
         <div class="hero-visual">
           <div class="visual-card">
             <img
-              src="../readme_assets/before_after_header_trans_img_s.png"
-              alt="Foldrion folder customization preview"
+              src="icon.png"
+              alt="Foldrion software icon"
               data-i18n-alt="heroImageAlt"
             >
+            <div class="visual-glow visual-glow-a"></div>
+            <div class="visual-glow visual-glow-b"></div>
           </div>
         </div>
       </section>

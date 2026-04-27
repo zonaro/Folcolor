@@ -265,6 +265,7 @@ static std::wstring gPickerTargetFolder;
 static std::wstring gSystemDefaultIconPath;
 static int gSystemDefaultIconIndex = 0;
 static BOOL gSystemDefaultIconSelected = FALSE;
+static const UINT kCustomDllIconNameBaseId = 100;
 
 enum PickerColorCategoryIndex
 {
@@ -295,6 +296,7 @@ static HICON gPickerPreviewIcon      = NULL;
 static BOOL  gPickerPreviewOwnsIcon  = FALSE;
 static BOOL  gPickerPreviewIsFolder  = FALSE;
 static BOOL  gPickerPreviewIsDefault = FALSE;
+static std::wstring GetIconDisplayName(LPCWSTR dllPath, UINT iconIndex);
 
 // Derived icon editor controls.
 #define IDC_DERIVED_PREVIEW 3001
@@ -383,6 +385,19 @@ struct DerivedSaveDialogState
 };
 
 static DerivedSaveDialogState gDerivedSaveDialog = {};
+
+/** Runtime state for the rename icon dialog. */
+struct RenameIconDialogState
+{
+	HWND hWnd;
+	HWND hParent;
+	std::wstring title;
+	std::wstring prompt;
+	std::wstring value;
+	BOOL confirmed;
+};
+
+static RenameIconDialogState gRenameIconDialog = {};
 
 // Runtime picker/editor theme resources.
 static HBRUSH gRuntimeBackgroundBrush = NULL;
@@ -1124,6 +1139,8 @@ static void PopulatePickerItems(HWND hWnd, int categoryIndex)
  * Enable or disable picker delete button from current selection.
  */
 static void UpdatePickerDeleteButtonState(HWND hWnd);
+static BOOL RenameCustomPickerItem(HWND hWnd, const PickerItem& item, const std::wstring& requestedName);
+static std::wstring GetIconDisplayName(LPCWSTR dllPath, UINT iconIndex);
 
 
 /**
@@ -1795,6 +1812,175 @@ static BOOL PromptDerivedSaveValues(HWND hParent, const std::wstring& initialCat
 
 	outCategory = gDerivedSaveDialog.category;
 	outName = gDerivedSaveDialog.name;
+	return TRUE;
+}
+
+
+#define IDC_RENAME_ICON_EDIT 3040
+#define IDC_RENAME_ICON_OK 3041
+#define IDC_RENAME_ICON_CANCEL 3042
+
+/** Window procedure for the runtime rename icon dialog. */
+static LRESULT CALLBACK RenameIconDialogWndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	UNREFERENCED_PARAMETER(lParam);
+
+	switch (msg)
+	{
+		case WM_CREATE:
+		{
+			CreateWindowW(L"STATIC", gRenameIconDialog.prompt.c_str(), WS_CHILD | WS_VISIBLE,
+				12, 14, 352, 18, hWnd, NULL, NULL, NULL);
+			CreateWindowW(L"EDIT", gRenameIconDialog.value.c_str(),
+				WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+				12, 38, 352, 24, hWnd, (HMENU) IDC_RENAME_ICON_EDIT, NULL, NULL);
+
+			CreateWindowW(L"BUTTON", L"Rename", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON,
+				188, 78, 84, 28, hWnd, (HMENU) IDC_RENAME_ICON_OK, NULL, NULL);
+			CreateWindowW(L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE,
+				280, 78, 84, 28, hWnd, (HMENU) IDC_RENAME_ICON_CANCEL, NULL, NULL);
+
+			HWND hEdit = GetDlgItem(hWnd, IDC_RENAME_ICON_EDIT);
+			SetFocus(hEdit);
+			SendMessageW(hEdit, EM_SETSEL, 0, -1);
+			ApplyRuntimeTheme(hWnd);
+			return 0;
+		}
+
+		case WM_THEMECHANGED:
+		case WM_SYSCOLORCHANGE:
+		case WM_SETTINGCHANGE:
+			ApplyRuntimeTheme(hWnd);
+			return 0;
+
+		case WM_ERASEBKGND:
+		{
+			RECT rc = {};
+			GetClientRect(hWnd, &rc);
+			FillRect((HDC) wParam, &rc, gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+			return 1;
+		}
+
+		case WM_CTLCOLORSTATIC:
+		{
+			HDC hdc = (HDC) wParam;
+			SetTextColor(hdc, gRuntimeTextColor);
+			SetBkColor(hdc, gRuntimeBackgroundColor);
+			return (LRESULT) (gRuntimeBackgroundBrush ? gRuntimeBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+		}
+
+		case WM_CTLCOLOREDIT:
+		{
+			HDC hdc = (HDC) wParam;
+			SetTextColor(hdc, gRuntimeTextColor);
+			SetBkColor(hdc, gRuntimePanelColor);
+			return (LRESULT) (gRuntimePanelBrush ? gRuntimePanelBrush : GetSysColorBrush(COLOR_WINDOW));
+		}
+
+		case WM_COMMAND:
+			switch (LOWORD(wParam))
+			{
+				case IDC_RENAME_ICON_OK:
+				{
+					WCHAR valueBuf[512] = {};
+					GetWindowTextW(GetDlgItem(hWnd, IDC_RENAME_ICON_EDIT), valueBuf, _countof(valueBuf));
+					std::wstring value = TrimWhitespaceCopy(valueBuf);
+					if (value.empty())
+					{
+						MessageBoxA(hWnd, "Name is required.", "Info:", MB_OK | MB_ICONINFORMATION);
+						SetFocus(GetDlgItem(hWnd, IDC_RENAME_ICON_EDIT));
+						break;
+					}
+
+					gRenameIconDialog.value = value;
+					gRenameIconDialog.confirmed = TRUE;
+					DestroyWindow(hWnd);
+				}
+				break;
+
+				case IDC_RENAME_ICON_CANCEL:
+					DestroyWindow(hWnd);
+					break;
+			}
+			return 0;
+
+		case WM_KEYDOWN:
+			if (wParam == VK_ESCAPE)
+			{
+				DestroyWindow(hWnd);
+				return 0;
+			}
+			break;
+
+		case WM_CLOSE:
+			DestroyWindow(hWnd);
+			return 0;
+	}
+
+	return DefWindowProcW(hWnd, msg, wParam, lParam);
+}
+
+
+/** Show a modal rename dialog and return the typed value when confirmed. */
+static BOOL ShowRenameIconDialog(HWND hParent, const std::wstring& title, const std::wstring& prompt,
+	const std::wstring& initialValue, std::wstring& outValue)
+{
+	outValue.clear();
+
+	gRenameIconDialog = {};
+	gRenameIconDialog.hParent = hParent;
+	gRenameIconDialog.title = title;
+	gRenameIconDialog.prompt = prompt;
+	gRenameIconDialog.value = initialValue;
+	gRenameIconDialog.confirmed = FALSE;
+
+	WNDCLASSW wc = {};
+	wc.lpfnWndProc = RenameIconDialogWndProc;
+	wc.hInstance = GetModuleHandleW(NULL);
+	wc.lpszClassName = L"FoldrionRenameIconDialog";
+	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wc.hIcon = LoadIconA((HINSTANCE) GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hbrBackground = (HBRUSH) (COLOR_WINDOW + 1);
+	RegisterClassW(&wc);
+
+	HWND hWnd = CreateWindowExW(
+		WS_EX_DLGMODALFRAME,
+		wc.lpszClassName,
+		title.c_str(),
+		WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+		CW_USEDEFAULT, CW_USEDEFAULT, 392, 156,
+		hParent, NULL, wc.hInstance, NULL);
+
+	if (!hWnd)
+		return FALSE;
+
+	gRuntimeThemeUsers++;
+	gRenameIconDialog.hWnd = hWnd;
+	EnableWindow(hParent, FALSE);
+	ShowWindow(hWnd, SW_SHOW);
+	UpdateWindow(hWnd);
+
+	MSG msg = {};
+	while (IsWindow(hWnd) && (GetMessage(&msg, NULL, 0, 0) > 0))
+	{
+		if (!IsDialogMessage(hWnd, &msg))
+		{
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+	}
+
+	EnableWindow(hParent, TRUE);
+	SetActiveWindow(hParent);
+
+	if (gRuntimeThemeUsers > 0)
+		gRuntimeThemeUsers--;
+	ReleaseRuntimeThemeResourcesIfUnused();
+
+	if (!gRenameIconDialog.confirmed)
+		return FALSE;
+
+	outValue = gRenameIconDialog.value;
 	return TRUE;
 }
 
@@ -3176,6 +3362,44 @@ static void SelectPickerItemByResourcePath(HWND hWnd, const std::wstring& path)
 }
 
 
+/** Locate one picker item by resource path/index and select it when available. */
+static void SelectPickerItemByResource(HWND hWnd, const std::wstring& path, int resourceIndex)
+{
+	if (path.empty())
+		return;
+
+	for (size_t c = 0; c < gPickerCategories.size(); c++)
+	{
+		for (size_t i = 0; i < gPickerCategories[c].items.size(); i++)
+		{
+			const PickerItem& item = gPickerCategories[c].items[i];
+			if (item.isBuiltIn || _wcsicmp(item.resourcePath.c_str(), path.c_str()) != 0)
+				continue;
+			if ((resourceIndex >= 0) && (item.resourceIndex != resourceIndex))
+				continue;
+
+			HWND hCat = GetDlgItem(hWnd, IDC_PICKER_CATEGORY);
+			SendMessageW(hCat, LB_SETCURSEL, (WPARAM) c, 0);
+			PopulatePickerItems(hWnd, (int) c);
+
+			HWND hItem = GetDlgItem(hWnd, IDC_PICKER_ITEM);
+			for (int row = 0; row < (int) gPickerVisibleItems.size(); row++)
+			{
+				if ((gPickerVisibleItems[row].categoryIndex == (int) c) && (gPickerVisibleItems[row].itemIndex == (int) i))
+				{
+					SendMessageW(hItem, LB_SETCURSEL, row, 0);
+					LoadPickerPreviewIcon(gPickerCategories[c].items[i]);
+					InvalidateRect(GetDlgItem(hWnd, IDC_PICKER_PREVIEW), NULL, TRUE);
+					UpdatePickerPreviewLabel(hWnd);
+					UpdatePickerDeleteButtonState(hWnd);
+					return;
+				}
+			}
+		}
+	}
+}
+
+
 /**
  * Return TRUE when one path lives under another directory path.
  */
@@ -3216,6 +3440,24 @@ static BOOL IsRemovableCustomPickerItem(const PickerItem& item)
 
 	std::wstring iconsRoot = std::wstring(myPathGlobal) + L"icons";
 	return IsPathUnderFolder(item.resourcePath, iconsRoot);
+}
+
+
+/** Return TRUE when a picker item can be renamed by the user. */
+static BOOL IsRenamableCustomPickerItem(const PickerItem& item)
+{
+	if (item.isBuiltIn || item.resourcePath.empty())
+		return FALSE;
+
+	std::wstring iconsRoot = std::wstring(myPathGlobal) + L"icons";
+	if (!IsPathUnderFolder(item.resourcePath, iconsRoot))
+		return FALSE;
+
+	LPCWSTR ext = PathFindExtensionW(item.resourcePath.c_str());
+	if (!ext || !ext[0])
+		return FALSE;
+
+	return ((_wcsicmp(ext, L".ico") == 0) || (_wcsicmp(ext, L".dll") == 0));
 }
 
 
@@ -3364,43 +3606,35 @@ static LRESULT CALLBACK PickerItemListSubclassProc(HWND hWnd, UINT uMsg, WPARAM 
 
 		case WM_RBUTTONUP:
 		{
-			// Handle right-click on icon item (rename)
 			POINT pt = { (short) LOWORD(lParam), (short) HIWORD(lParam) };
 			DWORD rowResult = (DWORD) SendMessageW(hWnd, LB_ITEMFROMPOINT, 0, MAKELPARAM(pt.x, pt.y));
 			int clickedRow = LOWORD(rowResult);
 			BOOL outsideListItem = HIWORD(rowResult);
-			
+
 			if (!outsideListItem && (clickedRow != LB_ERR))
 			{
-				// Get the visible item at this index
-				if ((size_t)clickedRow < gPickerVisibleItems.size())
+				if ((size_t) clickedRow < gPickerVisibleItems.size())
 				{
 					const PickerVisibleItem& visItem = gPickerVisibleItems[clickedRow];
-					
-					// Only allow renaming custom icons (icons from the custom icons folder)
-					if ((size_t)visItem.categoryIndex < gPickerCategories.size() &&
-						(size_t)visItem.itemIndex < gPickerCategories[visItem.categoryIndex].items.size())
+
+					if ((size_t) visItem.categoryIndex < gPickerCategories.size() &&
+						(size_t) visItem.itemIndex < gPickerCategories[visItem.categoryIndex].items.size())
 					{
-						PickerItem& item = gPickerCategories[visItem.categoryIndex].items[visItem.itemIndex];
-						
-						// Only allow renaming DLLs in custom icons folder
-						if (!item.isBuiltIn && IsCustomIconDll(item.resourcePath.c_str()))
+						const PickerItem& item = gPickerCategories[visItem.categoryIndex].items[visItem.itemIndex];
+						if (IsRenamableCustomPickerItem(item))
 						{
 							SendMessageW(hWnd, LB_SETCURSEL, (WPARAM) clickedRow, 0);
-							
-							// Show rename dialog
+
+							std::wstring initialName = item.label;
+							LPCWSTR ext = PathFindExtensionW(item.resourcePath.c_str());
+							if (ext && (_wcsicmp(ext, L".ico") == 0))
+								initialName = RemoveExtensionCopy(item.label);
+
 							std::wstring newName;
-							if (ShowRenameIconDialog(hParent, item.label, newName))
+							if (ShowRenameIconDialog(hParent, L"Rename Icon", L"New icon name", initialName, newName))
 							{
-								item.label = newName;
-								
-								// Refresh the picker display
-								SendMessageW(hParent, WM_PICKER_DELETE_REQUEST, 0, 0);  // Triggers refresh
-								
-								// Redraw the listbox
-								SendMessageW(hWnd, LB_DELETESTRING, (WPARAM) clickedRow, 0);
-								SendMessageW(hWnd, LB_INSERTSTRING, (WPARAM) clickedRow, (LPARAM) newName.c_str());
-								SendMessageW(hWnd, LB_SETCURSEL, (WPARAM) clickedRow, 0);
+								if (!RenameCustomPickerItem(hParent, item, newName))
+									MessageBoxA(hParent, "Unable to rename icon.", "Error:", MB_OK | MB_ICONERROR);
 							}
 							return 0;
 						}
@@ -4394,6 +4628,180 @@ static std::wstring GetCustomIconNamesPath()
 }
 
 
+/** Load one RT_STRING block into 16 UTF-16 strings. */
+static BOOL LoadStringTableBlock(HMODULE hModule, UINT blockId, std::wstring entries[16])
+{
+	for (int i = 0; i < 16; i++)
+		entries[i].clear();
+
+	if (!hModule)
+		return FALSE;
+
+	HRSRC hRes = FindResourceW(hModule, MAKEINTRESOURCEW(blockId), (LPCWSTR) RT_STRING);
+	if (!hRes)
+		return FALSE;
+
+	HGLOBAL hLoaded = LoadResource(hModule, hRes);
+	if (!hLoaded)
+		return FALSE;
+
+	const WORD* src = (const WORD*) LockResource(hLoaded);
+	DWORD bytes = SizeofResource(hModule, hRes);
+	if (!src || (bytes < sizeof(WORD)))
+		return FALSE;
+
+	const WORD* end = src + (bytes / sizeof(WORD));
+	for (int i = 0; (i < 16) && (src < end); i++)
+	{
+		WORD len = *src++;
+		if (((size_t) (end - src)) < len)
+			return FALSE;
+
+		if (len > 0)
+			entries[i].assign((const WCHAR*) src, (size_t) len);
+		src += len;
+	}
+
+	return TRUE;
+}
+
+
+/** Serialize 16 UTF-16 strings into one RT_STRING block payload. */
+static void BuildStringTableBlockData(const std::wstring entries[16], std::vector<BYTE>& outData)
+{
+	outData.clear();
+
+	for (int i = 0; i < 16; i++)
+	{
+		WORD len = (WORD) ((entries[i].size() < 0xFFFFu) ? entries[i].size() : 0xFFFFu);
+		size_t oldSize = outData.size();
+		outData.resize(oldSize + sizeof(WORD) + ((size_t) len * sizeof(WCHAR)));
+		memcpy(outData.data() + oldSize, &len, sizeof(WORD));
+		if (len > 0)
+			memcpy(outData.data() + oldSize + sizeof(WORD), entries[i].data(), (size_t) len * sizeof(WCHAR));
+	}
+}
+
+
+/** Update the display name string resource for one icon inside a custom DLL. */
+static BOOL RenameCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex, const std::wstring& newName)
+{
+	if (!dllPath || !dllPath[0])
+		return FALSE;
+
+	std::wstring trimmedName = TrimWhitespaceCopy(newName);
+	if (trimmedName.empty())
+		return FALSE;
+
+	UINT stringId = kCustomDllIconNameBaseId + iconIndex;
+	UINT blockId = (stringId / 16) + 1;
+	UINT blockIndex = stringId % 16;
+
+	std::wstring entries[16];
+	HMODULE hDll = LoadLibraryExW(dllPath, NULL, LOAD_LIBRARY_AS_DATAFILE);
+	if (hDll)
+	{
+		LoadStringTableBlock(hDll, blockId, entries);
+		FreeLibrary(hDll);
+	}
+
+	entries[blockIndex] = trimmedName;
+
+	std::vector<BYTE> blockData;
+	BuildStringTableBlockData(entries, blockData);
+	if (blockData.empty())
+		return FALSE;
+
+	HANDLE hUpdate = BeginUpdateResourceW(dllPath, FALSE);
+	if (!hUpdate)
+		return FALSE;
+
+	BOOL ok = UpdateResourceW(hUpdate, (LPCWSTR) RT_STRING, MAKEINTRESOURCEW(blockId),
+		MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+		blockData.data(), (DWORD) blockData.size());
+
+	if (!EndUpdateResourceW(hUpdate, ok ? FALSE : TRUE))
+		ok = FALSE;
+
+	return ok;
+}
+
+
+/** Rename a custom imported ICO file and return its new path. */
+static BOOL RenameCustomIcoFile(const PickerItem& item, const std::wstring& requestedName, std::wstring& renamedPath)
+{
+	renamedPath.clear();
+	if (item.resourcePath.empty())
+		return FALSE;
+
+	std::wstring fileStem = SanitizeIconFileStem(requestedName);
+	if (fileStem.empty())
+		return FALSE;
+
+	WCHAR folderPath[MAX_PATH] = {};
+	wcsncpy_s(folderPath, item.resourcePath.c_str(), _TRUNCATE);
+	if (!PathRemoveFileSpecW(folderPath) || !folderPath[0])
+		return FALSE;
+
+	std::wstring targetPath = std::wstring(folderPath) + L"\\" + fileStem + L".ico";
+	if (AreSamePath(item.resourcePath.c_str(), targetPath.c_str()))
+	{
+		renamedPath = item.resourcePath;
+		return TRUE;
+	}
+
+	DWORD targetAttr = GetFileAttributesW(targetPath.c_str());
+	if (targetAttr != INVALID_FILE_ATTRIBUTES)
+		return FALSE;
+
+	if (MoveFileW(item.resourcePath.c_str(), targetPath.c_str()))
+	{
+		renamedPath = targetPath;
+		return TRUE;
+	}
+
+	return FALSE;
+}
+
+
+/** Rename one custom picker item on disk/in resource and select it again after refresh. */
+static BOOL RenameCustomPickerItem(HWND hWnd, const PickerItem& item, const std::wstring& requestedName)
+{
+	if (!IsRenamableCustomPickerItem(item))
+		return FALSE;
+
+	LPCWSTR ext = PathFindExtensionW(item.resourcePath.c_str());
+	if (!ext || !ext[0])
+		return FALSE;
+
+	std::wstring renamedPath = item.resourcePath;
+	if (_wcsicmp(ext, L".ico") == 0)
+	{
+		if (!RenameCustomIcoFile(item, requestedName, renamedPath))
+			return FALSE;
+	}
+	else if (_wcsicmp(ext, L".dll") == 0)
+	{
+		if (!RenameCustomDllIconResource(item.resourcePath.c_str(), (UINT) item.resourceIndex, requestedName))
+			return FALSE;
+	}
+	else
+	{
+		return FALSE;
+	}
+
+	if (isInstalled)
+		RefreshInstalledShellMenu();
+
+	ReleasePickerPreviewIcon();
+	ReleasePickerIcons();
+	BuildPickerCategories(gPickerCategories);
+	PopulatePickerCategories(hWnd);
+	SelectPickerItemByResource(hWnd, renamedPath, (_wcsicmp(ext, L".dll") == 0) ? item.resourceIndex : -1);
+	return TRUE;
+}
+
+
 /**
  * Load an icon name from a String Resource in a DLL.
  * String Resources are stored in blocks of 16 strings, with IDs following:
@@ -4480,6 +4888,12 @@ static BOOL IsCustomIconDll(LPCWSTR dllPath)
  */
 static void PackageIconsIntoDll(HWND hWnd)
 {
+	struct PendingIconName
+	{
+		UINT stringId;
+		std::wstring name;
+	};
+
 	static const WCHAR kFilter[] =
 		L"Icon files (*.ico;*.png;*.jpg;*.jpeg)\0*.ico;*.png;*.jpg;*.jpeg\0"
 		L"ICO files (*.ico)\0*.ico\0"
@@ -4583,6 +4997,7 @@ static void PackageIconsIntoDll(HWND hWnd)
 	UINT successCount = 0;
 	UINT failedCount  = 0;
 	std::vector<std::wstring> failedNames;
+	std::vector<PendingIconName> pendingNames;
 
 	for (size_t i = 0; i < selectedPaths.size(); i++)
 	{
@@ -4665,18 +5080,53 @@ static void PackageIconsIntoDll(HWND hWnd)
 		// Add String Resource with icon name (IDS_ICON_0 = 100, IDS_ICON_1 = 101, etc.)
 		if (!iconName.empty())
 		{
-			UINT stringId = 100 + (nextGroupId - 1);
-			DWORD nameSize = (DWORD)((iconName.size() + 1) * sizeof(WCHAR));
-			if (!UpdateResourceW(hUpdate, (LPCWSTR)RT_STRING, MAKEINTRESOURCEW(stringId),
-				MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
-				const_cast<WCHAR*>(iconName.c_str()), nameSize))
-			{
-				// String resource update failed, but continue (icon still works with fallback name)
-			}
+			PendingIconName pending = {};
+			pending.stringId = kCustomDllIconNameBaseId + (nextGroupId - 1);
+			pending.name = iconName;
+			pendingNames.push_back(pending);
 		}
 
 		nextGroupId++;
 		successCount++;
+	}
+
+	for (size_t i = 0; i < pendingNames.size(); i++)
+	{
+		UINT blockId = (pendingNames[i].stringId / 16) + 1;
+		BOOL alreadyWritten = FALSE;
+		for (size_t j = 0; j < i; j++)
+		{
+			if (((pendingNames[j].stringId / 16) + 1) == blockId)
+			{
+				alreadyWritten = TRUE;
+				break;
+			}
+		}
+
+		if (alreadyWritten)
+			continue;
+
+		std::wstring entries[16];
+		for (size_t j = 0; j < pendingNames.size(); j++)
+		{
+			if (((pendingNames[j].stringId / 16) + 1) != blockId)
+				continue;
+
+			UINT entryIndex = pendingNames[j].stringId % 16;
+			entries[entryIndex] = pendingNames[j].name;
+		}
+
+		std::vector<BYTE> blockData;
+		BuildStringTableBlockData(entries, blockData);
+		if (!blockData.empty())
+		{
+			if (!UpdateResourceW(hUpdate, (LPCWSTR) RT_STRING, MAKEINTRESOURCEW(blockId),
+				MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+				blockData.data(), (DWORD) blockData.size()))
+			{
+				// String resource update failed, but continue (icon still works with fallback name)
+			}
+		}
 	}
 
 	// Commit changes (or discard if nothing was added)
@@ -5002,7 +5452,7 @@ static std::string DownloadVersionFile()
     HINTERNET hInternet = InternetOpenA("Foldrion", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
     if (!hInternet) return "";
 
-    HINTERNET hConnect = InternetOpenUrlA(hInternet, "http://github.com/zonaro/foldrion/updated.txt", NULL, 0, INTERNET_FLAG_RELOAD, 0);
+    HINTERNET hConnect = InternetOpenUrlA(hInternet, "http://github.com/zonaro/foldrion/version.txt", NULL, 0, INTERNET_FLAG_RELOAD, 0);
     if (!hConnect) {
         InternetCloseHandle(hInternet);
         return "";
@@ -5128,6 +5578,14 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 		case WM_SETTINGCHANGE:
 			UpdateInstallerTheme(hWnd);
 			return (INT_PTR) TRUE;
+
+		case WM_ERASEBKGND:
+		{
+			RECT rc = {};
+			GetClientRect(hWnd, &rc);
+			FillRect((HDC) wParam, &rc, gDialogBackgroundBrush ? gDialogBackgroundBrush : GetSysColorBrush(COLOR_WINDOW));
+			return (INT_PTR) TRUE;
+		}
 
 		case WM_COMMAND:
 		{

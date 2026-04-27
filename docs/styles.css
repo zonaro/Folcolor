@@ -1,18 +1,23 @@
 :root {
-  --bg: #f4efe5;
-  --bg-accent: #e7ddd0;
-  --surface: rgba(255, 252, 247, 0.82);
-  --surface-strong: #fffaf2;
-  --text: #1d180f;
-  --muted: #5e5547;
-  --line: rgba(61, 46, 28, 0.14);
-  --primary: #0d9b78;
-  --primary-deep: #0a7359;
-  --secondary: #f08f2e;
-  --shadow: 0 24px 60px rgba(43, 28, 9, 0.12);
-  --radius-xl: 28px;
-  --radius-lg: 20px;
-  --radius-md: 14px;
+  --bg: #050816;
+  --bg-deep: #03050d;
+  --surface: rgba(18, 24, 48, 0.58);
+  --surface-strong: rgba(24, 32, 63, 0.76);
+  --surface-soft: rgba(255, 255, 255, 0.07);
+  --text: #f6f8ff;
+  --muted: #b7c2e7;
+  --line: rgba(166, 205, 255, 0.16);
+  --primary: #4fd8ff;
+  --primary-deep: #1b7cff;
+  --secondary: #ff5ac8;
+  --warm: #ff9a3d;
+  --glow-blue: rgba(53, 174, 255, 0.36);
+  --glow-pink: rgba(255, 90, 200, 0.28);
+  --glow-warm: rgba(255, 154, 61, 0.24);
+  --shadow: 0 24px 80px rgba(0, 0, 0, 0.38);
+  --radius-xl: 30px;
+  --radius-lg: 22px;
+  --radius-md: 16px;
 }
 
 * {
@@ -28,9 +33,10 @@ body {
   font-family: "IBM Plex Sans", sans-serif;
   color: var(--text);
   background:
-    radial-gradient(circle at top left, rgba(240, 143, 46, 0.22), transparent 30%),
-    radial-gradient(circle at 85% 15%, rgba(13, 155, 120, 0.22), transparent 32%),
-    linear-gradient(180deg, #f6f1e8 0%, #f2eadf 100%);
+    radial-gradient(circle at 15% 15%, var(--glow-blue), transparent 26%),
+    radial-gradient(circle at 82% 16%, var(--glow-pink), transparent 26%),
+    radial-gradient(circle at 60% 78%, var(--glow-warm), transparent 24%),
+    linear-gradient(180deg, #0a1024 0%, var(--bg) 45%, var(--bg-deep) 100%);
   min-height: 100vh;
 }
 
@@ -39,17 +45,26 @@ body::before {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.15) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.15) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.4), transparent 80%);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.05), transparent 42%),
+    radial-gradient(circle at 20% 0%, rgba(255, 255, 255, 0.08), transparent 34%);
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  backdrop-filter: blur(18px) saturate(140%);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.3), transparent 92%);
 }
 
 .page-shell {
   width: min(1160px, calc(100% - 32px));
   margin: 0 auto;
   padding: 24px 0 48px;
+  position: relative;
+  z-index: 1;
 }
 
 .topbar {
@@ -57,7 +72,13 @@ body::before {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 12px 0 28px;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgba(17, 22, 44, 0.42);
+  backdrop-filter: blur(26px) saturate(150%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1), var(--shadow);
 }
 
 .brand {
@@ -72,11 +93,11 @@ body::before {
 }
 
 .brand-mark {
-  width: 18px;
-  height: 18px;
-  border-radius: 5px;
-  background: linear-gradient(135deg, var(--secondary), var(--primary));
-  box-shadow: 10px 10px 0 -4px rgba(13, 155, 120, 0.22);
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  object-fit: cover;
+  filter: drop-shadow(0 0 14px rgba(79, 216, 255, 0.35));
 }
 
 .topbar-actions {
@@ -95,11 +116,12 @@ body::before {
   color: var(--text);
   text-decoration: none;
   font-weight: 600;
+  opacity: 0.84;
 }
 
 .language-switch {
   border: 1px solid var(--line);
-  background: rgba(255, 250, 242, 0.8);
+  background: rgba(255, 255, 255, 0.07);
   color: var(--text);
   padding: 10px 14px;
   border-radius: 999px;
@@ -119,9 +141,9 @@ body::before {
 .hero {
   display: grid;
   grid-template-columns: 1.15fr 0.85fr;
-  gap: 28px;
+  gap: 36px;
   align-items: center;
-  padding: 28px 0 36px;
+  padding: 20px 0 44px;
 }
 
 .eyebrow,
@@ -131,7 +153,7 @@ body::before {
   letter-spacing: 0.12em;
   font-size: 0.78rem;
   font-weight: 700;
-  color: var(--primary-deep);
+  color: var(--primary);
 }
 
 .hero h1,
@@ -159,11 +181,33 @@ body::before {
   line-height: 1.7;
 }
 
+.hero-copy {
+  position: relative;
+}
+
 .hero-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
   margin: 28px 0 22px;
+}
+
+.version-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 22px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted);
+  font-size: 0.96rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.version-badge strong {
+  color: var(--text);
 }
 
 .button {
@@ -178,12 +222,15 @@ body::before {
 }
 
 .button-primary {
-  background: linear-gradient(135deg, var(--primary), var(--primary-deep));
-  color: #f7fff9;
+  background:
+    linear-gradient(135deg, rgba(79, 216, 255, 0.3), rgba(27, 124, 255, 0.82)),
+    linear-gradient(135deg, var(--primary), var(--primary-deep));
+  color: #f7fbff;
+  border: 1px solid rgba(124, 220, 255, 0.24);
 }
 
 .button-secondary {
-  background: rgba(255, 250, 242, 0.92);
+  background: rgba(255, 255, 255, 0.06);
   color: var(--text);
   border: 1px solid var(--line);
 }
@@ -211,7 +258,8 @@ body::before {
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--secondary), var(--primary));
+  background: linear-gradient(135deg, var(--warm), var(--secondary));
+  box-shadow: 0 0 16px rgba(255, 90, 200, 0.45);
 }
 
 .hero-visual {
@@ -224,22 +272,75 @@ body::before {
 .feature-item,
 .steps,
 .cta-panel {
-  border: 1px solid rgba(94, 85, 71, 0.14);
+  border: 1px solid var(--line);
   background: var(--surface);
-  backdrop-filter: blur(12px);
+  backdrop-filter: blur(28px) saturate(160%);
   box-shadow: var(--shadow);
+  position: relative;
+  overflow: hidden;
+}
+
+.visual-card::before,
+.info-card::before,
+.feature-item::before,
+.steps::before,
+.cta-panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), transparent 32%);
+  pointer-events: none;
 }
 
 .visual-card {
-  padding: 20px;
-  border-radius: var(--radius-xl);
-  transform: rotate(3deg);
+  width: min(100%, 460px);
+  min-height: 460px;
+  display: grid;
+  place-items: center;
+  padding: 34px;
+  border-radius: 36px;
+  background:
+    radial-gradient(circle at 80% 82%, rgba(255, 88, 120, 0.18), transparent 24%),
+    radial-gradient(circle at 18% 14%, rgba(79, 216, 255, 0.22), transparent 24%),
+    rgba(17, 22, 44, 0.56);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 28px 90px rgba(0, 0, 0, 0.44),
+    0 0 0 1px rgba(255, 255, 255, 0.03);
 }
 
 .visual-card img {
   display: block;
-  width: min(100%, 460px);
+  width: min(100%, 360px);
   height: auto;
+  position: relative;
+  z-index: 2;
+  filter:
+    drop-shadow(0 0 26px rgba(79, 216, 255, 0.28))
+    drop-shadow(0 0 48px rgba(255, 90, 200, 0.16));
+}
+
+.visual-glow {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(42px);
+  pointer-events: none;
+}
+
+.visual-glow-a {
+  width: 180px;
+  height: 180px;
+  top: 40px;
+  right: 28px;
+  background: rgba(79, 216, 255, 0.24);
+}
+
+.visual-glow-b {
+  width: 180px;
+  height: 180px;
+  left: 34px;
+  bottom: 28px;
+  background: rgba(255, 90, 200, 0.18);
 }
 
 .info-grid {
@@ -284,9 +385,10 @@ body::before {
 .feature-number {
   display: inline-block;
   margin-bottom: 16px;
-  color: var(--secondary);
+  color: var(--warm);
   font-family: "Space Grotesk", sans-serif;
   font-weight: 700;
+  text-shadow: 0 0 18px rgba(255, 154, 61, 0.32);
 }
 
 .feature-item h3 {
@@ -326,7 +428,7 @@ body::before {
 }
 
 .button-primary:hover {
-  box-shadow: 0 28px 70px rgba(10, 115, 89, 0.24);
+  box-shadow: 0 28px 70px rgba(27, 124, 255, 0.28);
 }
 
 .button-secondary:hover,
@@ -380,7 +482,7 @@ body::before {
   .topbar {
     align-items: flex-start;
     flex-direction: column;
-    padding-bottom: 22px;
+    padding: 16px;
   }
 
   .hero-actions,
@@ -400,5 +502,15 @@ body::before {
   .info-card,
   .feature-item {
     padding: 22px;
+  }
+
+  .visual-card {
+    min-height: 320px;
+    padding: 22px;
+  }
+
+  .brand-mark {
+    width: 32px;
+    height: 32px;
   }
 }

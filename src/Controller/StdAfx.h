@@ -60,8 +60,8 @@ inline std::string GetAppVersion() {
     const char* date = __DATE__;
     const char* time = __TIME__;
     
-    // Year: last 2 digits
-    int year = ((date[7] - '0') * 10 + (date[8] - '0')) % 100;
+    // __DATE__ uses "Mmm dd yyyy", so the last two year digits live at positions 9 and 10.
+    int year = (date[9] - '0') * 10 + (date[10] - '0');
     
     // Day of year
     int dayOfYear = GetDayOfYear(date);

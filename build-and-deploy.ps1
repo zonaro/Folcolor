@@ -94,17 +94,18 @@ try {
   
     Write-Host '[OK] Build concluido.' -ForegroundColor Green
 
-    # Write version to updated.txt
+    # Write version to version.txt
     Push-Location (Split-Path -Parent $exePath)
     & $exePath --version
     $versionFilePath = Join-Path (Get-Location) "version.txt"
     if (Test-Path -LiteralPath $versionFilePath) {
         $version = Get-Content -Path $versionFilePath -Raw
         Pop-Location
-        $version | Out-File -FilePath (Join-Path $PSScriptRoot "updated.txt") -Encoding UTF8
+        $version | Out-File -FilePath (Join-Path $PSScriptRoot "version.txt") -Encoding UTF8
         Remove-Item -Path $versionFilePath -Force
-        Write-Host "[VERSION] $version written to updated.txt" -ForegroundColor Green
-    } else {
+        Write-Host "[VERSION] $version written to version.txt" -ForegroundColor Green
+    }
+    else {
         Pop-Location
     }
 }
