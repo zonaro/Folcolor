@@ -68,6 +68,8 @@ body::after {
 }
 
 .topbar {
+  position: relative;
+  z-index: 100;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -108,7 +110,7 @@ body::after {
 
 .icon-packs-menu {
   position: relative;
-  z-index: 20;
+  z-index: 120;
 }
 
 .icon-packs-trigger {
@@ -141,7 +143,7 @@ body::after {
   position: absolute;
   top: calc(100% + 14px);
   right: 0;
-  z-index: 200;
+  z-index: 140;
   width: min(360px, calc(100vw - 32px));
   max-height: min(70vh, 520px);
   overflow: auto;

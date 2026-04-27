@@ -57,7 +57,14 @@ function Stop-FoldrionProcess {
     }
 
     Write-Host '[CLEANUP] Encerrando instancias do Foldrion antes do build...' -ForegroundColor Yellow
-    $runningProcesses | Stop-Process -Force
+    foreach ($process in $runningProcesses) {
+        try {
+            Stop-Process -Id $process.Id -Force -ErrorAction Stop
+        }
+        catch {
+            Write-Warning ("Nao foi possivel encerrar Foldrion PID {0}: {1}" -f $process.Id, $_.Exception.Message)
+        }
+    }
 }
 
 try {

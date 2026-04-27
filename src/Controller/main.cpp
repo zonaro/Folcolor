@@ -68,6 +68,115 @@ static BOOL FindDoppelganger()
 	return found;
 }
 
+static std::vector<DWORD> GetExplorerProcessIds()
+{
+	std::vector<DWORD> explorerPids;
+	PROCESSENTRY32W entry = {};
+	entry.dwSize = sizeof(entry);
+
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (snapshot == INVALID_HANDLE_VALUE)
+		return explorerPids;
+
+	if (Process32FirstW(snapshot, &entry))
+	{
+		do
+		{
+			if (_wcsicmp(entry.szExeFile, L"explorer.exe") == 0)
+				explorerPids.push_back(entry.th32ProcessID);
+		} while (Process32NextW(snapshot, &entry));
+	}
+
+	CloseHandle(snapshot);
+	return explorerPids;
+}
+
+static BOOL WaitForExplorerExit(const std::vector<DWORD>& explorerPids, DWORD timeoutMs)
+{
+	DWORD startTick = GetTickCount();
+	for (;;)
+	{
+		BOOL anyStillRunning = FALSE;
+		for (size_t i = 0; i < explorerPids.size(); ++i)
+		{
+			HANDLE processHandle = OpenProcess(SYNCHRONIZE, FALSE, explorerPids[i]);
+			if (!processHandle)
+				continue;
+
+			DWORD waitResult = WaitForSingleObject(processHandle, 0);
+			CloseHandle(processHandle);
+			if (waitResult == WAIT_TIMEOUT)
+			{
+				anyStillRunning = TRUE;
+				break;
+			}
+		}
+
+		if (!anyStillRunning)
+			return TRUE;
+
+		if (GetTickCount() - startTick >= timeoutMs)
+			return FALSE;
+
+		Sleep(200);
+	}
+}
+
+static BOOL WaitForNewExplorerProcess(const std::vector<DWORD>& previousPids, DWORD timeoutMs)
+{
+	DWORD startTick = GetTickCount();
+	for (;;)
+	{
+		std::vector<DWORD> currentPids = GetExplorerProcessIds();
+		for (size_t i = 0; i < currentPids.size(); ++i)
+		{
+			if (std::find(previousPids.begin(), previousPids.end(), currentPids[i]) == previousPids.end())
+				return TRUE;
+		}
+
+		if (previousPids.empty() && !currentPids.empty())
+			return TRUE;
+
+		if (GetTickCount() - startTick >= timeoutMs)
+			return FALSE;
+
+		Sleep(200);
+	}
+}
+
+static BOOL RestartExplorerProcess()
+{
+	std::vector<DWORD> explorerPids = GetExplorerProcessIds();
+	BOOL terminatedAnyProcess = FALSE;
+
+	for (size_t i = 0; i < explorerPids.size(); ++i)
+	{
+		HANDLE processHandle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, explorerPids[i]);
+		if (!processHandle)
+			continue;
+
+		if (TerminateProcess(processHandle, 0))
+			terminatedAnyProcess = TRUE;
+
+		CloseHandle(processHandle);
+	}
+
+	if (!explorerPids.empty())
+	{
+		if (!terminatedAnyProcess)
+			return FALSE;
+
+		if (!WaitForExplorerExit(explorerPids, 10000))
+			return FALSE;
+	}
+
+	HINSTANCE launchResult = ShellExecuteW(NULL, L"open", L"explorer.exe", NULL, NULL, SW_SHOWNORMAL);
+	if ((INT_PTR)launchResult <= 32)
+		return FALSE;
+
+	return WaitForNewExplorerProcess(explorerPids, 10000);
+}
+
 
 // ----------------------------------------------------------------------------
 // Custom hyperlink control
@@ -1250,6 +1359,9 @@ static void PopulatePickerItems(HWND hWnd, int categoryIndex)
 static void UpdatePickerDeleteButtonState(HWND hWnd);
 static BOOL RenameCustomPickerItem(HWND hWnd, const PickerItem& item, const std::wstring& requestedName);
 static std::wstring GetIconDisplayName(LPCWSTR dllPath, UINT iconIndex);
+static std::wstring LoadIconNameFromDll(LPCWSTR dllPath, UINT iconIndex);
+static BOOL IsCustomIconDll(LPCWSTR dllPath);
+static BOOL DeleteCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex);
 
 
 /**
@@ -3556,11 +3668,15 @@ static BOOL IsRemovableCustomPickerItem(const PickerItem& item)
 	if (item.isBuiltIn || item.resourcePath.empty())
 		return FALSE;
 
-	if (_wcsicmp(PathFindExtensionW(item.resourcePath.c_str()), L".ico") != 0)
+	std::wstring iconsRoot = std::wstring(myPathGlobal) + L"icons";
+	if (!IsPathUnderFolder(item.resourcePath, iconsRoot))
 		return FALSE;
 
-	std::wstring iconsRoot = std::wstring(myPathGlobal) + L"icons";
-	return IsPathUnderFolder(item.resourcePath, iconsRoot);
+	LPCWSTR ext = PathFindExtensionW(item.resourcePath.c_str());
+	if (!ext || !ext[0])
+		return FALSE;
+
+	return ((_wcsicmp(ext, L".ico") == 0) || (_wcsicmp(ext, L".dll") == 0));
 }
 
 
@@ -3647,16 +3763,26 @@ static void DeleteSelectedCustomIcon(HWND hWnd)
 	const PickerItem& item = gPickerCategories[vi.categoryIndex].items[vi.itemIndex];
 	if (!IsRemovableCustomPickerItem(item))
 	{
-		MessageBoxA(hWnd, "Only custom ICO icons can be deleted.", "Info:", MB_OK | MB_ICONINFORMATION);
+		MessageBoxA(hWnd, "Only custom ICO or DLL icons can be deleted.", "Info:", MB_OK | MB_ICONINFORMATION);
 		UpdatePickerDeleteButtonState(hWnd);
 		return;
 	}
 
+	LPCWSTR ext = PathFindExtensionW(item.resourcePath.c_str());
 	std::wstring fileName = PathFindFileNameW(item.resourcePath.c_str());
 	WCHAR question[512] = {};
-	_snwprintf_s(question, _countof(question), (_countof(question) - 1),
-		L"Delete this custom icon file?\n\n%s",
-		fileName.c_str());
+	if (ext && (_wcsicmp(ext, L".dll") == 0))
+	{
+		_snwprintf_s(question, _countof(question), (_countof(question) - 1),
+			L"Delete this custom icon from DLL?\n\n%ls\nIcon: %ls",
+			fileName.c_str(), item.label.c_str());
+	}
+	else
+	{
+		_snwprintf_s(question, _countof(question), (_countof(question) - 1),
+			L"Delete this custom icon file?\n\n%ls",
+			fileName.c_str());
+	}
 
 	if (MessageBoxW(hWnd, question, L"Confirm Delete", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
 	{
@@ -3664,9 +3790,15 @@ static void DeleteSelectedCustomIcon(HWND hWnd)
 		return;
 	}
 
-	if (!DeleteFileW(item.resourcePath.c_str()))
+	BOOL deleted = FALSE;
+	if (ext && (_wcsicmp(ext, L".dll") == 0))
+		deleted = DeleteCustomDllIconResource(item.resourcePath.c_str(), (UINT) item.resourceIndex);
+	else
+		deleted = DeleteFileW(item.resourcePath.c_str());
+
+	if (!deleted)
 	{
-		MessageBoxA(hWnd, "Unable to delete icon file.", "Error:", MB_OK | MB_ICONERROR);
+		MessageBoxA(hWnd, "Unable to delete icon.", "Error:", MB_OK | MB_ICONERROR);
 		UpdatePickerDeleteButtonState(hWnd);
 		return;
 	}
@@ -4804,6 +4936,118 @@ static void BuildStringTableBlockData(const std::wstring entries[16], std::vecto
 }
 
 
+/** Collect numeric resource IDs for one resource type. */
+static BOOL CALLBACK EnumNumericResourceNameProc(HMODULE hModule, LPCWSTR type, LPWSTR name, LONG_PTR lParam)
+{
+	UNREFERENCED_PARAMETER(hModule);
+	UNREFERENCED_PARAMETER(type);
+
+	if (!lParam || !IS_INTRESOURCE(name))
+		return TRUE;
+
+	std::vector<WORD>* ids = reinterpret_cast<std::vector<WORD>*>(lParam);
+	ids->push_back((WORD) (ULONG_PTR) name);
+	return TRUE;
+}
+
+
+/** Load one resource blob into a byte vector. */
+static BOOL LoadResourceBytes(HMODULE hModule, LPCWSTR type, WORD resourceId, std::vector<BYTE>& data)
+{
+	data.clear();
+
+	HRSRC hRes = FindResourceW(hModule, MAKEINTRESOURCEW(resourceId), type);
+	if (!hRes)
+		return FALSE;
+
+	HGLOBAL hLoaded = LoadResource(hModule, hRes);
+	if (!hLoaded)
+		return FALSE;
+
+	DWORD bytes = SizeofResource(hModule, hRes);
+	const BYTE* src = (const BYTE*) LockResource(hLoaded);
+	if (!src || (bytes == 0))
+		return FALSE;
+
+	data.assign(src, src + bytes);
+	return TRUE;
+}
+
+
+/** Rebuild an ICO file blob from one RT_GROUP_ICON resource inside a DLL. */
+static BOOL BuildIcoDataFromGroupResource(HMODULE hModule, WORD groupId, std::vector<BYTE>& icoData)
+{
+	icoData.clear();
+
+	std::vector<BYTE> groupBytes;
+	if (!LoadResourceBytes(hModule, (LPCWSTR) RT_GROUP_ICON, groupId, groupBytes))
+		return FALSE;
+
+	if (groupBytes.size() < 6)
+		return FALSE;
+
+	WORD idType = *reinterpret_cast<const WORD*>(&groupBytes[2]);
+	WORD idCount = *reinterpret_cast<const WORD*>(&groupBytes[4]);
+	if ((idType != 1) || (idCount == 0) || (groupBytes.size() < (size_t) (6 + ((size_t) idCount * 14))))
+		return FALSE;
+
+	std::vector<std::vector<BYTE>> imageBlobs;
+	imageBlobs.reserve(idCount);
+	size_t imageDataSize = 0;
+
+	for (WORD i = 0; i < idCount; i++)
+	{
+		size_t off = 6 + ((size_t) i * 14);
+		DWORD bytesInRes = *reinterpret_cast<const DWORD*>(&groupBytes[off + 8]);
+		WORD iconId = *reinterpret_cast<const WORD*>(&groupBytes[off + 12]);
+
+		std::vector<BYTE> imageBytes;
+		if (!LoadResourceBytes(hModule, (LPCWSTR) RT_ICON, iconId, imageBytes))
+			return FALSE;
+
+		if ((bytesInRes == 0) || (imageBytes.size() < bytesInRes))
+			return FALSE;
+
+		imageBytes.resize(bytesInRes);
+		imageDataSize += imageBytes.size();
+		imageBlobs.push_back(imageBytes);
+	}
+
+	icoData.resize(6 + ((size_t) idCount * 16) + imageDataSize);
+	WORD zero = 0;
+	WORD one = 1;
+	memcpy(icoData.data() + 0, &zero, 2);
+	memcpy(icoData.data() + 2, &one, 2);
+	memcpy(icoData.data() + 4, &idCount, 2);
+
+	DWORD imageOffset = (DWORD) (6 + ((size_t) idCount * 16));
+	BYTE* entryDst = icoData.data() + 6;
+	BYTE* imageDst = icoData.data() + imageOffset;
+
+	for (WORD i = 0; i < idCount; i++)
+	{
+		size_t grpOff = 6 + ((size_t) i * 14);
+		DWORD bytesInRes = (DWORD) imageBlobs[i].size();
+
+		entryDst[0] = groupBytes[grpOff + 0];
+		entryDst[1] = groupBytes[grpOff + 1];
+		entryDst[2] = groupBytes[grpOff + 2];
+		entryDst[3] = groupBytes[grpOff + 3];
+		memcpy(entryDst + 4, &groupBytes[grpOff + 4], 2);
+		memcpy(entryDst + 6, &groupBytes[grpOff + 6], 2);
+		memcpy(entryDst + 8, &bytesInRes, 4);
+		memcpy(entryDst + 12, &imageOffset, 4);
+
+		memcpy(imageDst, imageBlobs[i].data(), imageBlobs[i].size());
+		imageDst += imageBlobs[i].size();
+		imageOffset += bytesInRes;
+		entryDst += 16;
+	}
+
+	return TRUE;
+}
+
+
 /** Update the display name string resource for one icon inside a custom DLL. */
 static BOOL RenameCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex, const std::wstring& newName)
 {
@@ -4844,6 +5088,140 @@ static BOOL RenameCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex, const s
 	if (!EndUpdateResourceW(hUpdate, ok ? FALSE : TRUE))
 		ok = FALSE;
 
+	return ok;
+}
+
+
+/** Delete one icon resource from a custom DLL and compact the remaining indexes. */
+static BOOL DeleteCustomDllIconResource(LPCWSTR dllPath, UINT iconIndex)
+{
+	if (!dllPath || !dllPath[0] || !IsCustomIconDll(dllPath))
+		return FALSE;
+
+	HMODULE hDll = LoadLibraryExW(dllPath, NULL, LOAD_LIBRARY_AS_DATAFILE);
+	if (!hDll)
+		return FALSE;
+
+	std::vector<WORD> groupIds;
+	std::vector<WORD> iconIds;
+	EnumResourceNamesW(hDll, (LPCWSTR) RT_GROUP_ICON, EnumNumericResourceNameProc, (LONG_PTR) &groupIds);
+	EnumResourceNamesW(hDll, (LPCWSTR) RT_ICON, EnumNumericResourceNameProc, (LONG_PTR) &iconIds);
+
+	std::sort(groupIds.begin(), groupIds.end());
+	groupIds.erase(std::unique(groupIds.begin(), groupIds.end()), groupIds.end());
+	std::sort(iconIds.begin(), iconIds.end());
+	iconIds.erase(std::unique(iconIds.begin(), iconIds.end()), iconIds.end());
+
+	if (iconIndex >= groupIds.size())
+	{
+		FreeLibrary(hDll);
+		return FALSE;
+	}
+
+	struct RemainingDllIcon
+	{
+		std::vector<BYTE> icoData;
+		std::wstring name;
+	};
+
+	std::vector<RemainingDllIcon> remainingIcons;
+	remainingIcons.reserve(groupIds.size() ? (groupIds.size() - 1) : 0);
+
+	for (size_t ordinal = 0; ordinal < groupIds.size(); ordinal++)
+	{
+		if (ordinal == iconIndex)
+			continue;
+
+		RemainingDllIcon entry;
+		if (!BuildIcoDataFromGroupResource(hDll, groupIds[ordinal], entry.icoData) || entry.icoData.empty())
+		{
+			FreeLibrary(hDll);
+			return FALSE;
+		}
+
+		entry.name = LoadIconNameFromDll(dllPath, (UINT) ordinal);
+		remainingIcons.push_back(entry);
+	}
+
+	HANDLE hUpdate = BeginUpdateResourceW(dllPath, FALSE);
+	if (!hUpdate)
+	{
+		FreeLibrary(hDll);
+		return FALSE;
+	}
+
+	BOOL ok = TRUE;
+	WORD nextIconId = 1;
+	WORD nextGroupId = 1;
+	size_t oldCount = groupIds.size();
+
+	for (size_t i = 0; ok && (i < groupIds.size()); i++)
+	{
+		ok = UpdateResourceW(hUpdate, (LPCWSTR) RT_GROUP_ICON, MAKEINTRESOURCEW(groupIds[i]),
+			MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), NULL, 0);
+	}
+
+	for (size_t i = 0; ok && (i < iconIds.size()); i++)
+	{
+		ok = UpdateResourceW(hUpdate, (LPCWSTR) RT_ICON, MAKEINTRESOURCEW(iconIds[i]),
+			MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL), NULL, 0);
+	}
+
+	for (size_t i = 0; ok && (i < remainingIcons.size()); i++)
+	{
+		std::vector<BYTE> groupData;
+		UINT added = PackOneIcoGroup(hUpdate, nextGroupId, remainingIcons[i].icoData, nextIconId, groupData);
+		if ((added == 0) || groupData.empty())
+		{
+			ok = FALSE;
+			break;
+		}
+
+		ok = UpdateResourceW(hUpdate, (LPCWSTR) RT_GROUP_ICON, MAKEINTRESOURCEW(nextGroupId),
+			MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+			groupData.data(), (DWORD) groupData.size());
+		nextGroupId++;
+	}
+
+	if (ok && oldCount > 0)
+	{
+		UINT firstStringId = kCustomDllIconNameBaseId;
+		UINT lastStringId = kCustomDllIconNameBaseId + (UINT) oldCount - 1;
+		UINT firstBlockId = (firstStringId / 16) + 1;
+		UINT lastBlockId = (lastStringId / 16) + 1;
+
+		for (UINT blockId = firstBlockId; ok && (blockId <= lastBlockId); blockId++)
+		{
+			std::wstring entries[16];
+			LoadStringTableBlock(hDll, blockId, entries);
+
+			for (UINT stringId = firstStringId; stringId <= lastStringId; stringId++)
+			{
+				if (((stringId / 16) + 1) == blockId)
+					entries[stringId % 16].clear();
+			}
+
+			for (size_t i = 0; i < remainingIcons.size(); i++)
+			{
+				UINT stringId = kCustomDllIconNameBaseId + (UINT) i;
+				if (((stringId / 16) + 1) != blockId)
+					continue;
+
+				entries[stringId % 16] = remainingIcons[i].name;
+			}
+
+			std::vector<BYTE> blockData;
+			BuildStringTableBlockData(entries, blockData);
+			ok = !blockData.empty() && UpdateResourceW(hUpdate, (LPCWSTR) RT_STRING, MAKEINTRESOURCEW(blockId),
+				MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+				blockData.data(), (DWORD) blockData.size());
+		}
+	}
+
+	if (!EndUpdateResourceW(hUpdate, ok ? FALSE : TRUE))
+		ok = FALSE;
+
+	FreeLibrary(hDll);
 	return ok;
 }
 
@@ -5819,23 +6197,10 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 
 			case IDC_RESTART_EXPLORER:
 			{
-				// Restart Windows Explorer
-				HWND hTaskbar = FindWindowW(L"Shell_TrayWnd", NULL);
-				if (hTaskbar)
-				{
-					PostMessage(hTaskbar, WM_COMMAND, 0x7402, 0); // Undocumented command to restart explorer
-				}
+				if (RestartExplorerProcess())
+					MessageBoxA(hWnd, "Explorer restarted.", "Success:", MB_OK | MB_ICONINFORMATION);
 				else
-				{
-					// Fallback: use shell execute to restart explorer
-					SHELLEXECUTEINFOW sei = { sizeof(sei) };
-					sei.lpVerb = L"runas";
-					sei.lpFile = L"cmd.exe";
-					sei.lpParameters = L"/c taskkill /f /im explorer.exe && start explorer.exe";
-					sei.nShow = SW_HIDE;
-					ShellExecuteExW(&sei);
-				}
-				MessageBoxA(hWnd, "Explorer restarted.", "Success:", MB_OK | MB_ICONINFORMATION);
+					MessageBoxA(hWnd, "Could not restart Explorer. Try running the installer as administrator.", "Error:", MB_OK | MB_ICONERROR);
 				return (INT_PTR) TRUE;
 			}
 			break;
