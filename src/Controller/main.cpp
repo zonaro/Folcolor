@@ -6179,8 +6179,10 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 				{
 					if (!gSystemDefaultIconPath.empty())
 					{
-						SetSystemDefaultFolderIcon(gSystemDefaultIconPath.c_str(), gSystemDefaultIconIndex);
-						MessageBoxA(hWnd, "System default folder icon set. You may want to restart Explorer to see changes.", "Success:", MB_OK | MB_ICONINFORMATION);
+						if (SetSystemDefaultFolderIcon(gSystemDefaultIconPath.c_str(), gSystemDefaultIconIndex))
+							MessageBoxA(hWnd, "System default folder icon set for both closed and open folders. If Explorer still shows the old icon, use Restart Explorer.", "Success:", MB_OK | MB_ICONINFORMATION);
+						else
+							MessageBoxA(hWnd, "Unable to set the system default folder icon.", "Error:", MB_OK | MB_ICONERROR);
 					}
 				}
 				return (INT_PTR) TRUE;
@@ -6189,8 +6191,10 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 
 			case IDC_RESTORE_DEFAULT_ICON:
 			{
-				RestoreSystemDefaultFolderIcon();
-				MessageBoxA(hWnd, "System default folder icon restored.", "Success:", MB_OK | MB_ICONINFORMATION);
+				if (RestoreSystemDefaultFolderIcon())
+					MessageBoxA(hWnd, "System default folder icon restored.", "Success:", MB_OK | MB_ICONINFORMATION);
+				else
+					MessageBoxA(hWnd, "Unable to restore the system default folder icon.", "Error:", MB_OK | MB_ICONERROR);
 				return (INT_PTR) TRUE;
 			}
 			break;
