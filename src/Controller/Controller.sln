@@ -7,14 +7,14 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Controller", "Controller.vc
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
-		Debug|x86 = Debug|x86
-		Release|x86 = Release|x86
+		Debug|Win32 = Debug|Win32
+		Release|Win32 = Release|Win32
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{11111111-1111-1111-1111-111111111111}.Debug|x86.ActiveCfg = Debug|Win32
-		{11111111-1111-1111-1111-111111111111}.Debug|x86.Build.0 = Debug|Win32
-		{11111111-1111-1111-1111-111111111111}.Release|x86.ActiveCfg = Release|Win32
-		{11111111-1111-1111-1111-111111111111}.Release|x86.Build.0 = Release|Win32
+		{11111111-1111-1111-1111-111111111111}.Debug|Win32.ActiveCfg = Debug|Win32
+		{11111111-1111-1111-1111-111111111111}.Debug|Win32.Build.0 = Debug|Win32
+		{11111111-1111-1111-1111-111111111111}.Release|Win32.ActiveCfg = Release|Win32
+		{11111111-1111-1111-1111-111111111111}.Release|Win32.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

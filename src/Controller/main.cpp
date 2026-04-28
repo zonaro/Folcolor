@@ -71,20 +71,20 @@ static BOOL FindDoppelganger()
 	BOOL found = FALSE;
 
 	UINT myPid = GetCurrentProcessId();
-	char myName[_MAX_FNAME];
-	if (!GetModuleBaseNameA(GetCurrentProcess(), NULL, myName, _countof(myName)))
-		strcpy_s(myName, TARGET_NAME);
+	WCHAR myName[_MAX_FNAME];
+	if (!GetModuleBaseNameW(GetCurrentProcess(), NULL, myName, _countof(myName)))
+		wcscpy_s(myName, _countof(myName), TARGET_NAME_W);
 
-	PROCESSENTRY32 nfo;
+	PROCESSENTRY32W nfo;
 	nfo.dwSize = sizeof(nfo);
 	HANDLE handle = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, NULL);
 	if (handle != INVALID_HANDLE_VALUE)
 	{
-		if (Process32First(handle, &nfo))
+		if (Process32FirstW(handle, &nfo))
 		{
 			do
 			{
-				if ((strcmp(myName, nfo.szExeFile) == 0) && (nfo.th32ProcessID != myPid))
+				if ((wcscmp(myName, nfo.szExeFile) == 0) && (nfo.th32ProcessID != myPid))
 				{
 					HWND hwnd = GetPrimaryFoldrionWindowForPid(nfo.th32ProcessID);
 					if (hwnd)
@@ -95,7 +95,7 @@ static BOOL FindDoppelganger()
 					}
 				}
 
-			} while (Process32Next(handle, &nfo));
+			} while (Process32NextW(handle, &nfo));
 		}
 
 		CloseHandle(handle);
@@ -115,7 +115,6 @@ static COLORREF urlColor = RGB(0, 102, 204);
 static HBRUSH gDialogBackgroundBrush = NULL;
 static HBRUSH gDialogButtonBrush = NULL;
 
-static const char *kVersionBlobUrl = "https://github.com/zonaro/Foldrion/blob/main/src/Controller/Win32/Release/version.txt";
 static const char *kVersionRawUrl = "https://raw.githubusercontent.com/zonaro/Foldrion/main/src/Controller/Win32/Release/version.txt";
 static const wchar_t *kDownloadExeRawUrl = L"https://raw.githubusercontent.com/zonaro/Foldrion/main/src/Controller/Win32/Release/Foldrion.exe";
 
@@ -1873,7 +1872,7 @@ static BOOL PromptDerivedSaveValues(HWND hParent, const std::wstring &initialCat
 	wc.hInstance = GetModuleHandleW(NULL);
 	wc.lpszClassName = L"FoldrionDerivedSaveDialog";
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hIcon = LoadIconA((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hIcon = LoadIconW((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCEW(IDI_APP));
 	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassW(&wc);
 
@@ -2042,7 +2041,7 @@ static BOOL ShowRenameIconDialog(HWND hParent, const std::wstring &title, const 
 	wc.hInstance = GetModuleHandleW(NULL);
 	wc.lpszClassName = L"FoldrionRenameIconDialog";
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hIcon = LoadIconA((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hIcon = LoadIconW((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCEW(IDI_APP));
 	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassW(&wc);
 
@@ -3435,7 +3434,7 @@ static BOOL ShowDerivedIconEditor(HWND hParent, const PickerItem &baseItem, std:
 	wc.hInstance = GetModuleHandleW(NULL);
 	wc.lpszClassName = L"FoldrionDerivedIconEditor";
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hIcon = LoadIconA((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hIcon = LoadIconW((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCEW(IDI_APP));
 	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassW(&wc);
 
@@ -4264,7 +4263,7 @@ static int ShowFolderIconPicker(LPCWSTR folderPath)
 	wc.hInstance = GetModuleHandleW(NULL);
 	wc.lpszClassName = L"FoldrionRuntimePicker";
 	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hIcon = LoadIconA((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+	wc.hIcon = LoadIconW((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCEW(IDI_APP));
 	wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
 	RegisterClassW(&wc);
 
@@ -5835,11 +5834,7 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 
 static std::string DownloadVersionFile()
 {
-	std::string content = TrimAsciiWhitespace(DownloadTextUrl(kVersionBlobUrl));
-	if (LooksLikeVersionString(content))
-		return content;
-
-	content = TrimAsciiWhitespace(DownloadTextUrl(kVersionRawUrl));
+	std::string content = TrimAsciiWhitespace(DownloadTextUrl(kVersionRawUrl));
 	if (LooksLikeVersionString(content))
 		return content;
 
@@ -5868,7 +5863,7 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 		CenterWindowOnScreen(hWnd, GetForegroundWindow());
 
 		// Set dialog icon
-		HICON hIcon = LoadIconA((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCE(IDI_APP));
+		HICON hIcon = LoadIconW((HINSTANCE)GetModuleHandle(NULL), MAKEINTRESOURCEW(IDI_APP));
 		SendMessage(hWnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
 		SendMessage(hWnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon);
 
@@ -6190,7 +6185,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 	isRunningOutsideInstallFolder = !AreSamePath(currentExePath, installedExePath);
 
 	// Icon resource set index per OS version
-	OSVERSIONINFOA nfo = {sizeof(OSVERSIONINFOA), 0, 0, 0};
+	OSVERSIONINFOEXW nfo = {};
+	nfo.dwOSVersionInfoSize = sizeof(nfo);
 	RtlGetVersion((PRTL_OSVERSIONINFOEXW)&nfo);
 	if (nfo.dwMajorVersion >= 10)
 	{
