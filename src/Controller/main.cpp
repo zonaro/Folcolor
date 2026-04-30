@@ -133,7 +133,78 @@ static std::string TrimAsciiWhitespace(const std::string &value)
 
 static bool LooksLikeVersionString(const std::string &value)
 {
-	return !value.empty() && value[0] == 'v';
+	return !value.empty() && ((value[0] == 'v') || (value[0] == 'V'));
+}
+
+static bool ParseVersionComponents(const std::string &value, std::vector<int> &components)
+{
+	components.clear();
+
+	std::string trimmed = TrimAsciiWhitespace(value);
+	if (trimmed.empty())
+		return false;
+
+	size_t pos = 0;
+	if ((trimmed[pos] == 'v') || (trimmed[pos] == 'V'))
+		++pos;
+
+	while (pos < trimmed.size())
+	{
+		if (!isdigit(static_cast<unsigned char>(trimmed[pos])))
+			return false;
+
+		unsigned long component = 0;
+		while ((pos < trimmed.size()) && isdigit(static_cast<unsigned char>(trimmed[pos])))
+		{
+			component = (component * 10) + (trimmed[pos] - '0');
+			if (component > INT_MAX)
+				return false;
+			++pos;
+		}
+
+		components.push_back((int)component);
+		if (pos >= trimmed.size())
+			break;
+
+		if (trimmed[pos] != '.')
+			return false;
+		++pos;
+		if (pos >= trimmed.size())
+			return false;
+	}
+
+	return !components.empty();
+}
+
+static bool CompareVersionStrings(const std::string &leftVersion, const std::string &rightVersion, int *comparisonResult)
+{
+	if (!comparisonResult)
+		return false;
+
+	std::vector<int> leftComponents;
+	std::vector<int> rightComponents;
+	if (!ParseVersionComponents(leftVersion, leftComponents) || !ParseVersionComponents(rightVersion, rightComponents))
+		return false;
+
+	size_t count = max(leftComponents.size(), rightComponents.size());
+	for (size_t i = 0; i < count; i++)
+	{
+		int left = (i < leftComponents.size()) ? leftComponents[i] : 0;
+		int right = (i < rightComponents.size()) ? rightComponents[i] : 0;
+		if (left < right)
+		{
+			*comparisonResult = -1;
+			return true;
+		}
+		if (left > right)
+		{
+			*comparisonResult = 1;
+			return true;
+		}
+	}
+
+	*comparisonResult = 0;
+	return true;
 }
 
 static std::string DownloadTextUrl(const char *url)
@@ -473,6 +544,7 @@ static std::wstring GetIconDisplayName(LPCWSTR dllPath, UINT iconIndex);
 #define IDC_DERIVED_ROTATION 3034
 #define IDC_DERIVED_LABEL_ROTATION 3035
 #define IDC_DERIVED_EDIT_ROTATION 3036
+#define WM_STARTUP_UPDATE_CHECK (WM_APP + 102)
 
 /** A user-loaded overlay layer in the derived icon editor. */
 struct DerivedLayer
@@ -1652,6 +1724,163 @@ static std::wstring SanitizeIconFileStem(const std::wstring &rawName)
 		sanitized.pop_back();
 
 	return sanitized;
+}
+
+static BOOL HasIconFileExtension(LPCWSTR filePath)
+{
+	LPCWSTR ext = PathFindExtensionW(filePath);
+	if (!ext || !ext[0])
+		return FALSE;
+
+	return (_wcsicmp(ext, L".ico") == 0) || (_wcsicmp(ext, L".png") == 0) ||
+		   (_wcsicmp(ext, L".jpg") == 0) || (_wcsicmp(ext, L".jpeg") == 0);
+}
+
+static void CollectIconFilesRecursively(const std::wstring &path, std::vector<std::wstring> &outFiles)
+{
+	DWORD attr = GetFileAttributesW(path.c_str());
+	if (attr == INVALID_FILE_ATTRIBUTES)
+		return;
+
+	if (attr & FILE_ATTRIBUTE_DIRECTORY)
+	{
+		std::wstring pattern = path + L"\\*";
+		WIN32_FIND_DATAW fd = {};
+		HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+		if (hFind == INVALID_HANDLE_VALUE)
+			return;
+
+		do
+		{
+			if ((wcscmp(fd.cFileName, L".") == 0) || (wcscmp(fd.cFileName, L"..") == 0))
+				continue;
+
+			std::wstring child = path + L"\\" + fd.cFileName;
+			if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+			{
+				if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+					CollectIconFilesRecursively(child, outFiles);
+			}
+			else if (HasIconFileExtension(child.c_str()))
+			{
+				outFiles.push_back(child);
+			}
+		} while (FindNextFileW(hFind, &fd));
+
+		FindClose(hFind);
+	}
+	else if (HasIconFileExtension(path.c_str()))
+	{
+		outFiles.push_back(path);
+	}
+}
+
+static std::wstring NormalizeFolderPath(const std::wstring &path)
+{
+	if (path.empty())
+		return std::wstring();
+
+	WCHAR fullPath[MAX_PATH] = {};
+	if (GetFullPathNameW(path.c_str(), _countof(fullPath), fullPath, NULL) == 0)
+		return path;
+
+	DWORD attr = GetFileAttributesW(fullPath);
+	if ((attr != INVALID_FILE_ATTRIBUTES) && !(attr & FILE_ATTRIBUTE_DIRECTORY))
+		PathRemoveFileSpecW(fullPath);
+
+	size_t len = wcslen(fullPath);
+	if ((len > 1) && ((fullPath[len - 1] == L'\\') || (fullPath[len - 1] == L'/')))
+		fullPath[len - 1] = L'\0';
+
+	return std::wstring(fullPath);
+}
+
+static std::wstring GetCommonDirectoryRoot(const std::vector<std::wstring> &paths)
+{
+	if (paths.empty())
+		return std::wstring();
+
+	std::wstring common = NormalizeFolderPath(paths[0]);
+	if (common.empty())
+		return std::wstring();
+
+	for (size_t i = 1; i < paths.size(); i++)
+	{
+		std::wstring candidate = NormalizeFolderPath(paths[i]);
+		if (candidate.empty())
+			return std::wstring();
+
+		size_t maxCompare = min(common.size(), candidate.size());
+		size_t idx = 0;
+		while ((idx < maxCompare) && (towlower(common[idx]) == towlower(candidate[idx])))
+			idx++;
+
+		if (idx == 0)
+			return std::wstring();
+
+		if (idx < common.size())
+		{
+			size_t sep = common.find_last_of(L"\\/", idx - 1);
+			if (sep == std::wstring::npos)
+				return std::wstring();
+			common.resize(sep + 1);
+		}
+	}
+
+	return common;
+}
+
+static std::wstring BuildCustomDllIconName(const std::wstring &srcPath, const std::wstring &rootDir)
+{
+	std::wstring relativePath = srcPath;
+	if (!rootDir.empty())
+	{
+		std::wstring normalizedRoot = rootDir;
+		if (!normalizedRoot.empty() && ((normalizedRoot.back() == L'\\') || (normalizedRoot.back() == L'/')))
+			normalizedRoot.pop_back();
+
+		if ((relativePath.size() > normalizedRoot.size()) &&
+			(_wcsnicmp(relativePath.c_str(), normalizedRoot.c_str(), normalizedRoot.size()) == 0) &&
+			((relativePath[normalizedRoot.size()] == L'\\') || (relativePath[normalizedRoot.size()] == L'/')))
+		{
+			relativePath = relativePath.substr(normalizedRoot.size() + 1);
+		}
+	}
+
+	if (relativePath.empty())
+		relativePath = srcPath;
+
+	size_t lastSlash = relativePath.find_last_of(L"\\/");
+	size_t dot = relativePath.rfind(L'.');
+	if ((dot != std::wstring::npos) && ((lastSlash == std::wstring::npos) || (dot > lastSlash)))
+		relativePath.resize(dot);
+
+	std::vector<std::wstring> segments;
+	size_t start = 0;
+	while (start < relativePath.size())
+	{
+		size_t next = relativePath.find_first_of(L"\\/", start);
+		std::wstring segment = relativePath.substr(start, (next == std::wstring::npos) ? std::wstring::npos : next - start);
+		segment = SanitizeIconFileStem(segment);
+		if (!segment.empty())
+			segments.push_back(segment);
+		if (next == std::wstring::npos)
+			break;
+		start = next + 1;
+	}
+
+	if (segments.empty())
+		return SanitizeIconFileStem(RemoveExtensionCopy(srcPath));
+
+	std::wstring result;
+	for (size_t i = 0; i < segments.size(); i++)
+	{
+		if (i > 0)
+			result += L" - ";
+		result += segments[i];
+	}
+
+	return result;
 }
 
 /** Build default icon name from base icon plus first user layer. */
@@ -4620,8 +4849,12 @@ static std::wstring BuildDefaultPackageDllName(const std::vector<std::wstring> &
 
 	WCHAR folderPath[MAX_PATH] = {};
 	wcsncpy_s(folderPath, selectedPaths[0].c_str(), _TRUNCATE);
-	if (!PathRemoveFileSpecW(folderPath) || !folderPath[0])
-		return L"PackagedIcons.dll";
+	DWORD attr = GetFileAttributesW(folderPath);
+	if ((attr != INVALID_FILE_ATTRIBUTES) && !(attr & FILE_ATTRIBUTE_DIRECTORY))
+	{
+		if (!PathRemoveFileSpecW(folderPath) || !folderPath[0])
+			return L"PackagedIcons.dll";
+	}
 
 	std::wstring folderName = PathFindFileNameW(folderPath);
 	folderName = SanitizeIconFileStem(folderName);
@@ -5237,6 +5470,24 @@ static void PackageIconsIntoDll(HWND hWnd)
 	if (selectedPaths.empty())
 		return;
 
+	std::vector<std::wstring> iconPaths;
+	for (const auto &path : selectedPaths)
+		CollectIconFilesRecursively(path, iconPaths);
+
+	std::sort(iconPaths.begin(), iconPaths.end(), [](const std::wstring &a, const std::wstring &b)
+			  { return _wcsicmp(a.c_str(), b.c_str()) < 0; });
+	iconPaths.erase(std::unique(iconPaths.begin(), iconPaths.end(), [](const std::wstring &a, const std::wstring &b)
+								{ return _wcsicmp(a.c_str(), b.c_str()) == 0; }),
+					iconPaths.end());
+
+	if (iconPaths.empty())
+	{
+		MessageBoxA(hWnd, "No icon files were found in the selected path(s).", "Info:", MB_OK | MB_ICONINFORMATION);
+		return;
+	}
+
+	std::wstring rootDir = GetCommonDirectoryRoot(iconPaths);
+
 	// Determine output directory
 	std::wstring iconsDir;
 	if (isInstalled)
@@ -5302,9 +5553,9 @@ static void PackageIconsIntoDll(HWND hWnd)
 	std::vector<std::wstring> failedNames;
 	std::vector<PendingIconName> pendingNames;
 
-	for (size_t i = 0; i < selectedPaths.size(); i++)
+	for (size_t i = 0; i < iconPaths.size(); i++)
 	{
-		const std::wstring &srcPath = selectedPaths[i];
+		const std::wstring &srcPath = iconPaths[i];
 		LPCWSTR ext = PathFindExtensionW(srcPath.c_str());
 		std::vector<BYTE> icoData;
 
@@ -5358,9 +5609,8 @@ static void PackageIconsIntoDll(HWND hWnd)
 			continue;
 		}
 
-		// Extract the icon name from the source file (without extension)
-		std::wstring iconName = RemoveExtensionCopy(srcPath);
-		iconName = SanitizeIconFileStem(iconName);
+		// Extract the icon name from the source file path
+		std::wstring iconName = BuildCustomDllIconName(srcPath, rootDir);
 
 		std::vector<BYTE> groupData;
 		UINT added = PackOneIcoGroup(hUpdate, nextGroupId, icoData, nextIconId, groupData);
@@ -5832,6 +6082,8 @@ static void RunInstallWithProgressWindow(HWND hWnd, BOOL isReinstallOperation, B
 	}
 }
 
+static void OpenDownloadUrl(HWND hWnd);
+
 static std::string DownloadVersionFile()
 {
 	std::string content = TrimAsciiWhitespace(DownloadTextUrl(kVersionRawUrl));
@@ -5839,6 +6091,34 @@ static std::string DownloadVersionFile()
 		return content;
 
 	return "";
+}
+
+static void CheckForUpdates(HWND hWnd, BOOL allowInstallUpdate)
+{
+	if (allowInstallUpdate && isInstalled && isRunningOutsideInstallFolder)
+	{
+		RunReinstallFlow(hWnd);
+		return;
+	}
+
+	std::string remoteVersion = DownloadVersionFile();
+	std::string localVersion = GetAppVersion();
+	int versionComparison = 0;
+	if (remoteVersion.empty() || !CompareVersionStrings(localVersion, remoteVersion, &versionComparison))
+	{
+		MessageBoxA(hWnd, "Não foi possível verificar atualizações.", "Erro:", MB_OK | MB_ICONERROR);
+	}
+	else if (versionComparison >= 0)
+	{
+		MessageBoxA(hWnd, "Você já tem a versão mais recente.", "Atualização:", MB_OK | MB_ICONINFORMATION);
+	}
+	else
+	{
+		std::string msg = "Nova versão disponível: " + remoteVersion + "\n\nDeseja fazer o download agora?";
+		int result = MessageBoxA(hWnd, msg.c_str(), "Atualização:", MB_YESNO | MB_ICONINFORMATION);
+		if (result == IDYES)
+			OpenDownloadUrl(hWnd);
+	}
 }
 
 static void OpenDownloadUrl(HWND hWnd)
@@ -5947,10 +6227,15 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 
 		UpdateInstallDependentControls(hWnd);
 		UpdateInstallerTheme(hWnd);
+		PostMessage(hWnd, WM_STARTUP_UPDATE_CHECK, 0, 0);
 
 		return (INT_PTR)TRUE;
 	}
 	break;
+
+	case WM_STARTUP_UPDATE_CHECK:
+		CheckForUpdates(hWnd, FALSE);
+		return (INT_PTR)TRUE;
 
 	case WM_THEMECHANGED:
 	case WM_SYSCOLORCHANGE:
@@ -6047,29 +6332,8 @@ static INT_PTR CALLBACK DlgProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPar
 
 		case IDC_CHECK_UPDATES:
 		{
-			if (isInstalled && isRunningOutsideInstallFolder)
-			{
-				RunReinstallFlow(hWnd);
-				return (INT_PTR)TRUE;
-			}
-
-			std::string remoteVersion = DownloadVersionFile();
-			std::string localVersion = GetAppVersion();
-			if (remoteVersion.empty())
-			{
-				MessageBoxA(hWnd, "Não foi possível verificar atualizações.", "Erro:", MB_OK | MB_ICONERROR);
-			}
-			else if (remoteVersion == localVersion)
-			{
-				MessageBoxA(hWnd, "Você já tem a versão mais recente.", "Atualização:", MB_OK | MB_ICONINFORMATION);
-			}
-			else
-			{
-				std::string msg = "Nova versão disponível: " + remoteVersion + "\n\nDeseja fazer o download agora?";
-				int result = MessageBoxA(hWnd, msg.c_str(), "Atualização:", MB_YESNO | MB_ICONINFORMATION);
-				if (result == IDYES)
-					OpenDownloadUrl(hWnd);
-			}
+			CheckForUpdates(hWnd, TRUE);
+			return (INT_PTR)TRUE;
 		}
 		break;
 		};
