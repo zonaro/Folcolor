@@ -47,6 +47,37 @@ function Get-MSBuildPath {
     throw 'MSBuild.exe nao foi encontrado. Instale o Visual Studio Build Tools ou ajuste o PATH.'
 }
 
+function Get-SignToolPath {
+    [CmdletBinding()]
+    param()
+
+    $command = Get-Command -Name 'signtool.exe' -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    $sdkRoots = @(
+        'C:\Program Files (x86)\Windows Kits\10\bin',
+        'C:\Program Files (x86)\Windows Kits\11\bin'
+    )
+
+    foreach ($sdkRoot in $sdkRoots) {
+        if (-not (Test-Path -LiteralPath $sdkRoot)) {
+            continue
+        }
+
+        $candidate = Get-ChildItem -Path $sdkRoot -Filter 'signtool.exe' -Recurse -ErrorAction SilentlyContinue |
+            Sort-Object -Property FullName -Descending |
+            Select-Object -First 1
+
+        if ($candidate) {
+            return $candidate.FullName
+        }
+    }
+
+    throw 'signtool.exe nao foi encontrado. Instale o Windows SDK para assinar o executavel.'
+}
+
 function Stop-FoldrionProcess {
     [CmdletBinding()]
     param()
@@ -76,6 +107,56 @@ function Get-FoldrionVersionString {
     $dayOfYear = $now.DayOfYear.ToString('000')
     $hourMinute = $now.ToString('HHmm')
     return "v1.$year.$dayOfYear.$hourMinute"
+}
+
+function Sign-FoldrionExecutable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath
+    )
+
+    $pfxPath = $env:FOLDRION_SIGN_PFX_PATH
+    $pfxPassword = $env:FOLDRION_SIGN_PFX_PASSWORD
+    $certThumbprint = $env:FOLDRION_SIGN_CERT_SHA1
+    $timestampUrl = if ($env:FOLDRION_SIGN_TIMESTAMP_URL) { $env:FOLDRION_SIGN_TIMESTAMP_URL } else { 'http://timestamp.digicert.com' }
+
+    if ([string]::IsNullOrWhiteSpace($pfxPath) -and [string]::IsNullOrWhiteSpace($certThumbprint)) {
+        Write-Host '[SIGN] Assinatura desabilitada. Defina FOLDRION_SIGN_PFX_PATH ou FOLDRION_SIGN_CERT_SHA1 para assinar o executavel.' -ForegroundColor Yellow
+        return
+    }
+
+    $signToolPath = Get-SignToolPath
+    $arguments = @(
+        'sign',
+        '/fd', 'SHA256',
+        '/td', 'SHA256',
+        '/tr', $timestampUrl
+    )
+
+    if (-not [string]::IsNullOrWhiteSpace($pfxPath)) {
+        if (-not (Test-Path -LiteralPath $pfxPath)) {
+            throw "Certificado PFX nao encontrado em $pfxPath"
+        }
+
+        $arguments += @('/f', $pfxPath)
+        if (-not [string]::IsNullOrWhiteSpace($pfxPassword)) {
+            $arguments += @('/p', $pfxPassword)
+        }
+    }
+    else {
+        $arguments += @('/sha1', $certThumbprint)
+    }
+
+    $arguments += $FilePath
+
+    Write-Host '[SIGN] Assinando executavel...' -ForegroundColor Cyan
+    & $signToolPath @arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Assinatura falhou com codigo $LASTEXITCODE"
+    }
+
+    Write-Host '[OK] Executavel assinado.' -ForegroundColor Green
 }
 
 try {
@@ -116,6 +197,7 @@ try {
     Push-Location (Split-Path -Parent $exePath)
     $versionPath = Join-Path (Get-Location) 'version.txt'
     Set-Content -LiteralPath $versionPath -Value (Get-FoldrionVersionString) -NoNewline -Encoding ASCII
+    Sign-FoldrionExecutable -FilePath $exePath
 
     #delete build temp directory, and foldrion.pdb if it exists
     $buildPath = Join-Path (Split-Path -Parent $exePath) "build"
