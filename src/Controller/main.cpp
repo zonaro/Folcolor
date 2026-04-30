@@ -4864,6 +4864,30 @@ static std::wstring BuildDefaultPackageDllName(const std::vector<std::wstring> &
 	return folderName + L".dll";
 }
 
+static BOOL BrowseForFolder(HWND hWnd, std::wstring &outFolder)
+{
+	outFolder.clear();
+
+	BROWSEINFOW bi = {};
+	bi.hwndOwner = hWnd;
+	bi.lpszTitle = L"Select a folder containing icons to package into DLL";
+	bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE | BIF_EDITBOX;
+
+	LPITEMIDLIST pidl = SHBrowseForFolderW(&bi);
+	if (!pidl)
+		return FALSE;
+
+	WCHAR folderPath[MAX_PATH] = {};
+	BOOL ok = SHGetPathFromIDListW(pidl, folderPath);
+	CoTaskMemFree(pidl);
+
+	if (!ok || (folderPath[0] == L'\0'))
+		return FALSE;
+
+	outFolder = folderPath;
+	return TRUE;
+}
+
 /**
  * Ask the user for a DLL file name and normalize it to a safe *.dll name.
  * Returns FALSE when the user cancels.
@@ -5430,49 +5454,12 @@ static void PackageIconsIntoDll(HWND hWnd)
 		std::wstring name;
 	};
 
-	static const WCHAR kFilter[] =
-		L"Icon files (*.ico;*.png;*.jpg;*.jpeg)\0*.ico;*.png;*.jpg;*.jpeg\0"
-		L"ICO files (*.ico)\0*.ico\0"
-		L"Image files (*.png;*.jpg;*.jpeg)\0*.png;*.jpg;*.jpeg\0\0";
-
-	std::vector<WCHAR> fileBuffer(32768, L'\0');
-	OPENFILENAMEW ofn = {};
-	ofn.lStructSize = sizeof(ofn);
-	ofn.hwndOwner = hWnd;
-	ofn.lpstrFilter = kFilter;
-	ofn.lpstrFile = fileBuffer.data();
-	ofn.nMaxFile = (DWORD)fileBuffer.size();
-	ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_ALLOWMULTISELECT;
-	ofn.lpstrTitle = L"Select icons to package into DLL";
-	if (!GetOpenFileNameW(&ofn))
-		return;
-
-	// Parse multi-select results (directory + file names, or single full path)
-	std::vector<std::wstring> selectedPaths;
-	const WCHAR *ptr = fileBuffer.data();
-	std::wstring dirOrSingle = ptr;
-	ptr += dirOrSingle.size() + 1;
-
-	if (*ptr == L'\0')
-	{
-		selectedPaths.push_back(dirOrSingle);
-	}
-	else
-	{
-		while (*ptr)
-		{
-			std::wstring name = ptr;
-			selectedPaths.push_back(dirOrSingle + L"\\" + name);
-			ptr += name.size() + 1;
-		}
-	}
-
-	if (selectedPaths.empty())
+	std::wstring selectedFolder;
+	if (!BrowseForFolder(hWnd, selectedFolder))
 		return;
 
 	std::vector<std::wstring> iconPaths;
-	for (const auto &path : selectedPaths)
-		CollectIconFilesRecursively(path, iconPaths);
+	CollectIconFilesRecursively(selectedFolder, iconPaths);
 
 	std::sort(iconPaths.begin(), iconPaths.end(), [](const std::wstring &a, const std::wstring &b)
 			  { return _wcsicmp(a.c_str(), b.c_str()) < 0; });
@@ -5513,7 +5500,8 @@ static void PackageIconsIntoDll(HWND hWnd)
 	}
 
 	std::wstring requestedDllName;
-	std::wstring defaultDllName = BuildDefaultPackageDllName(selectedPaths);
+	std::vector<std::wstring> defaultFolderPath{selectedFolder};
+	std::wstring defaultDllName = BuildDefaultPackageDllName(defaultFolderPath);
 	if (!PromptPackageDllName(hWnd, iconsDir, defaultDllName, requestedDllName))
 		return;
 
