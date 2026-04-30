@@ -20,77 +20,73 @@ extern WCHAR myPathGlobal[MAX_PATH];
 extern int iconOffsetGlobal;
 
 static InstallDiscoveryProgressCallback gInstallDiscoveryProgressCallback = NULL;
-static void* gInstallDiscoveryProgressUserData = NULL;
+static void *gInstallDiscoveryProgressUserData = NULL;
 static volatile LONG gInstallDiscoveryCancelRequested = FALSE;
 static void CreateStartMenuShortcut();
 static void RemoveStartMenuShortcut();
 
-
-void SetInstallDiscoveryProgressCallback(InstallDiscoveryProgressCallback callback, void* userData)
+void SetInstallDiscoveryProgressCallback(InstallDiscoveryProgressCallback callback, void *userData)
 {
-gInstallDiscoveryProgressCallback = callback;
-gInstallDiscoveryProgressUserData = userData;
+    gInstallDiscoveryProgressCallback = callback;
+    gInstallDiscoveryProgressUserData = userData;
 }
 
 void ResetInstallDiscoveryCancel()
 {
-InterlockedExchange(&gInstallDiscoveryCancelRequested, FALSE);
+    InterlockedExchange(&gInstallDiscoveryCancelRequested, FALSE);
 }
 
 void RequestInstallDiscoveryCancel()
 {
-InterlockedExchange(&gInstallDiscoveryCancelRequested, TRUE);
+    InterlockedExchange(&gInstallDiscoveryCancelRequested, TRUE);
 }
 
 BOOL IsInstallDiscoveryCancelRequested()
 {
-return (InterlockedCompareExchange(&gInstallDiscoveryCancelRequested, FALSE, FALSE) != FALSE);
+    return (InterlockedCompareExchange(&gInstallDiscoveryCancelRequested, FALSE, FALSE) != FALSE);
 }
-
 
 // Icon index to color label
 static const LPCWSTR nameTable[COLOR_ICON_COUNT] =
-{
-L"Red",
-L"Pink",
-L"Purple",
-L"Blue",
-L"Cyan",
-L"Teal",
-L"Green",
-L"Lime",
-L"Yellow",
-L"Orange",
-L"Brown",
-L"Grey",
-L"Blue Grey",
-L"Black",
+    {
+        L"Red",
+        L"Pink",
+        L"Purple",
+        L"Blue",
+        L"Cyan",
+        L"Teal",
+        L"Green",
+        L"Lime",
+        L"Yellow",
+        L"Orange",
+        L"Brown",
+        L"Grey",
+        L"Blue Grey",
+        L"Black",
 };
-
 
 // Return TRUE if system has our installed registry entry
 BOOL HasInstallRegistry()
 {
-HKEY rootKey = NULL;
-LSTATUS lStatus = RegOpenKeyExA(HKEY_CLASSES_ROOT, REGISTRY_PATH, 0, KEY_READ, &rootKey);
-if (lStatus == ERROR_SUCCESS)
-{
-RegCloseKey(rootKey);
-return TRUE;
+    HKEY rootKey = NULL;
+    LSTATUS lStatus = RegOpenKeyExA(HKEY_CLASSES_ROOT, REGISTRY_PATH, 0, KEY_READ, &rootKey);
+    if (lStatus == ERROR_SUCCESS)
+    {
+        RegCloseKey(rootKey);
+        return TRUE;
+    }
+    return FALSE;
 }
-return FALSE;
-}
-
 
 /**
  * Build absolute path to the installed executable.
  */
 static std::wstring BuildInstalledExePath()
 {
-WCHAR exePath[MAX_PATH];
-if (_snwprintf_s(exePath, _countof(exePath), (_countof(exePath) - 1), L"%s%S", myPathGlobal, TARGET_NAME) < 1)
-CRITICAL("Path size limit error!");
-return std::wstring(exePath);
+    WCHAR exePath[MAX_PATH];
+    if (_snwprintf_s(exePath, _countof(exePath), (_countof(exePath) - 1), L"%s%S", myPathGlobal, TARGET_NAME) < 1)
+        CRITICAL("Path size limit error!");
+    return std::wstring(exePath);
 }
 
 /**
@@ -98,51 +94,51 @@ return std::wstring(exePath);
  */
 static BOOL StopOtherFoldrionProcesses()
 {
-	const DWORD currentPid = GetCurrentProcessId();
-	PROCESSENTRY32W entry = {};
-	entry.dwSize = sizeof(entry);
+    const DWORD currentPid = GetCurrentProcessId();
+    PROCESSENTRY32W entry = {};
+    entry.dwSize = sizeof(entry);
 
-	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-	if (snapshot == INVALID_HANDLE_VALUE)
-		CRITICAL_API_FAIL(CreateToolhelp32Snapshot, GetLastError());
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE)
+        CRITICAL_API_FAIL(CreateToolhelp32Snapshot, GetLastError());
 
-	BOOL success = TRUE;
-	if (Process32FirstW(snapshot, &entry))
-	{
-		do
-		{
-			if (entry.th32ProcessID == currentPid)
-				continue;
+    BOOL success = TRUE;
+    if (Process32FirstW(snapshot, &entry))
+    {
+        do
+        {
+            if (entry.th32ProcessID == currentPid)
+                continue;
 
-			if (_wcsicmp(entry.szExeFile, L"" TARGET_NAME) != 0)
-				continue;
+            if (_wcsicmp(entry.szExeFile, L"" TARGET_NAME) != 0)
+                continue;
 
-			HANDLE processHandle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, entry.th32ProcessID);
-			if (!processHandle)
-			{
-				success = FALSE;
-				break;
-			}
+            HANDLE processHandle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, entry.th32ProcessID);
+            if (!processHandle)
+            {
+                success = FALSE;
+                break;
+            }
 
-			if (!TerminateProcess(processHandle, 0))
-			{
-				CloseHandle(processHandle);
-				success = FALSE;
-				break;
-			}
+            if (!TerminateProcess(processHandle, 0))
+            {
+                CloseHandle(processHandle);
+                success = FALSE;
+                break;
+            }
 
-			DWORD waitResult = WaitForSingleObject(processHandle, 10000);
-			CloseHandle(processHandle);
-			if (waitResult != WAIT_OBJECT_0)
-			{
-				success = FALSE;
-				break;
-			}
-		} while (Process32NextW(snapshot, &entry));
-	}
+            DWORD waitResult = WaitForSingleObject(processHandle, 10000);
+            CloseHandle(processHandle);
+            if (waitResult != WAIT_OBJECT_0)
+            {
+                success = FALSE;
+                break;
+            }
+        } while (Process32NextW(snapshot, &entry));
+    }
 
-	CloseHandle(snapshot);
-	return success;
+    CloseHandle(snapshot);
+    return success;
 }
 
 /**
@@ -150,1141 +146,1097 @@ static BOOL StopOtherFoldrionProcesses()
  */
 static HKEY CreateSubKeyWOrFail(HKEY root, LPCWSTR path)
 {
-HKEY outKey = NULL;
-LSTATUS lStatus = RegCreateKeyExW(root, path, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &outKey, NULL);
-if (lStatus != ERROR_SUCCESS)
-CRITICAL_API_FAIL(RegCreateKeyExW, lStatus);
-return outKey;
+    HKEY outKey = NULL;
+    LSTATUS lStatus = RegCreateKeyExW(root, path, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &outKey, NULL);
+    if (lStatus != ERROR_SUCCESS)
+        CRITICAL_API_FAIL(RegCreateKeyExW, lStatus);
+    return outKey;
 }
-
 
 /**
  * Write REG_SZ value to the registry.
  */
-static void WriteRegSzWOrFail(HKEY key, LPCWSTR name, const std::wstring& value)
+static void WriteRegSzWOrFail(HKEY key, LPCWSTR name, const std::wstring &value)
 {
-LPCWSTR valueName = (name && name[0]) ? name : NULL;
-DWORD sizeBytes = DWORD((value.size() + 1) * sizeof(WCHAR));
-LSTATUS lStatus = RegSetValueExW(key, valueName, 0, REG_SZ, (const BYTE*) value.c_str(), sizeBytes);
-if (lStatus != ERROR_SUCCESS)
-CRITICAL_API_FAIL(RegSetValueExW, lStatus);
+    LPCWSTR valueName = (name && name[0]) ? name : NULL;
+    DWORD sizeBytes = DWORD((value.size() + 1) * sizeof(WCHAR));
+    LSTATUS lStatus = RegSetValueExW(key, valueName, 0, REG_SZ, (const BYTE *)value.c_str(), sizeBytes);
+    if (lStatus != ERROR_SUCCESS)
+        CRITICAL_API_FAIL(RegSetValueExW, lStatus);
 }
-
 
 /**
  * Write REG_DWORD value to the registry.
  */
 static void WriteRegDwordWOrFail(HKEY key, LPCWSTR name, DWORD value)
 {
-LSTATUS lStatus = RegSetValueExW(key, name, 0, REG_DWORD, (const BYTE*) &value, sizeof(value));
-if (lStatus != ERROR_SUCCESS)
-CRITICAL_API_FAIL(RegSetValueExW, lStatus);
+    LSTATUS lStatus = RegSetValueExW(key, name, 0, REG_DWORD, (const BYTE *)&value, sizeof(value));
+    if (lStatus != ERROR_SUCCESS)
+        CRITICAL_API_FAIL(RegSetValueExW, lStatus);
 }
-
 
 /**
  * Build deterministic numeric key names to preserve menu order in shell.
  */
 static std::wstring MakeOrderedKeyName(UINT order)
 {
-WCHAR num[12];
-swprintf_s(num, _countof(num), L"%04u", order);
-return std::wstring(num);
+    WCHAR num[12];
+    swprintf_s(num, _countof(num), L"%04u", order);
+    return std::wstring(num);
 }
-
 
 /**
  * Build command line for built-in color icons.
  */
-static std::wstring BuildBuiltInCommand(const std::wstring& exePath, int index)
+static std::wstring BuildBuiltInCommand(const std::wstring &exePath, int index)
 {
-WCHAR cmd[2048];
-if (_snwprintf_s(cmd, _countof(cmd), (_countof(cmd) - 1),
-L"\"%s\" " L"" COMMAND_ICON L"%d " L"" COMMAND_FOLDER L"\"%%1\"",
-exePath.c_str(), index) < 1)
-{
-CRITICAL("Path size limit error!");
+    WCHAR cmd[2048];
+    if (_snwprintf_s(cmd, _countof(cmd), (_countof(cmd) - 1),
+                     L"\"%s\" "
+                     L"" COMMAND_ICON L"%d "
+                     L"" COMMAND_FOLDER L"\"%%1\"",
+                     exePath.c_str(), index) < 1)
+    {
+        CRITICAL("Path size limit error!");
+    }
+    return std::wstring(cmd);
 }
-return std::wstring(cmd);
-}
-
 
 /**
  * Build command line for external icon resources (ico/dll,index).
  */
-static std::wstring BuildResourceCommand(const std::wstring& exePath, const std::wstring& resourcePath, int index)
+static std::wstring BuildResourceCommand(const std::wstring &exePath, const std::wstring &resourcePath, int index)
 {
-WCHAR cmd[4096];
-if (_snwprintf_s(cmd, _countof(cmd), (_countof(cmd) - 1),
-L"\"%s\" --resource \"%s\" --rindex %d --folder \"%%1\"",
-exePath.c_str(), resourcePath.c_str(), index) < 1)
-{
-CRITICAL("Path size limit error!");
+    WCHAR cmd[4096];
+    if (_snwprintf_s(cmd, _countof(cmd), (_countof(cmd) - 1),
+                     L"\"%s\" --resource \"%s\" --rindex %d --folder \"%%1\"",
+                     exePath.c_str(), resourcePath.c_str(), index) < 1)
+    {
+        CRITICAL("Path size limit error!");
+    }
+    return std::wstring(cmd);
 }
-return std::wstring(cmd);
-}
-
 
 /**
  * Build icon value format expected by shell menu entries: file,index.
  */
-static std::wstring BuildIconSpec(const std::wstring& filePath, int index)
+static std::wstring BuildIconSpec(const std::wstring &filePath, int index)
 {
     LPCWSTR ext = PathFindExtensionW(filePath.c_str());
     if (ext && (_wcsicmp(ext, L".ico") == 0))
         return filePath;
 
-WCHAR icon[4096];
-if (_snwprintf_s(icon, _countof(icon), (_countof(icon) - 1), L"%s,%d", filePath.c_str(), index) < 1)
-CRITICAL("Path size limit error!");
-return std::wstring(icon);
+    WCHAR icon[4096];
+    if (_snwprintf_s(icon, _countof(icon), (_countof(icon) - 1), L"%s,%d", filePath.c_str(), index) < 1)
+        CRITICAL("Path size limit error!");
+    return std::wstring(icon);
 }
-
 
 /**
  * Add command menu item under a shell key.
  */
-static void AddCommandItem(HKEY parentShellKey, UINT& order, const std::wstring& label, const std::wstring& icon, const std::wstring& command, BOOL separatorBefore)
+static void AddCommandItem(HKEY parentShellKey, UINT &order, const std::wstring &label, const std::wstring &icon, const std::wstring &command, BOOL separatorBefore)
 {
-std::wstring keyName = MakeOrderedKeyName(order++);
-HKEY itemKey = CreateSubKeyWOrFail(parentShellKey, keyName.c_str());
-WriteRegSzWOrFail(itemKey, L"MUIVerb", label);
-if (!icon.empty())
-WriteRegSzWOrFail(itemKey, L"Icon", icon);
-if (separatorBefore)
-WriteRegDwordWOrFail(itemKey, L"CommandFlags", 0x20);
+    std::wstring keyName = MakeOrderedKeyName(order++);
+    HKEY itemKey = CreateSubKeyWOrFail(parentShellKey, keyName.c_str());
+    WriteRegSzWOrFail(itemKey, L"MUIVerb", label);
+    if (!icon.empty())
+        WriteRegSzWOrFail(itemKey, L"Icon", icon);
+    if (separatorBefore)
+        WriteRegDwordWOrFail(itemKey, L"CommandFlags", 0x20);
 
-HKEY commandKey = CreateSubKeyWOrFail(itemKey, L"command");
-WriteRegSzWOrFail(commandKey, NULL, command);
-RegCloseKey(commandKey);
-RegCloseKey(itemKey);
+    HKEY commandKey = CreateSubKeyWOrFail(itemKey, L"command");
+    WriteRegSzWOrFail(commandKey, NULL, command);
+    RegCloseKey(commandKey);
+    RegCloseKey(itemKey);
 }
-
 
 /**
  * Add submenu container and return its child shell key.
  */
-static HKEY AddSubmenu(HKEY parentShellKey, UINT& order, const std::wstring& label, const std::wstring& icon)
+static HKEY AddSubmenu(HKEY parentShellKey, UINT &order, const std::wstring &label, const std::wstring &icon)
 {
-std::wstring keyName = MakeOrderedKeyName(order++);
-HKEY itemKey = CreateSubKeyWOrFail(parentShellKey, keyName.c_str());
-WriteRegSzWOrFail(itemKey, L"MUIVerb", label);
-if (!icon.empty())
-WriteRegSzWOrFail(itemKey, L"Icon", icon);
-WriteRegSzWOrFail(itemKey, L"SubCommands", L"");
+    std::wstring keyName = MakeOrderedKeyName(order++);
+    HKEY itemKey = CreateSubKeyWOrFail(parentShellKey, keyName.c_str());
+    WriteRegSzWOrFail(itemKey, L"MUIVerb", label);
+    if (!icon.empty())
+        WriteRegSzWOrFail(itemKey, L"Icon", icon);
+    WriteRegSzWOrFail(itemKey, L"SubCommands", L"");
 
-HKEY shellKey = CreateSubKeyWOrFail(itemKey, L"shell");
-RegCloseKey(itemKey);
-return shellKey;
+    HKEY shellKey = CreateSubKeyWOrFail(itemKey, L"shell");
+    RegCloseKey(itemKey);
+    return shellKey;
 }
-
 
 /**
  * Case-insensitive extension comparison helper.
  */
-static BOOL HasExt(const std::wstring& path, LPCWSTR ext)
+static BOOL HasExt(const std::wstring &path, LPCWSTR ext)
 {
-LPCWSTR e = PathFindExtensionW(path.c_str());
-return (e && (_wcsicmp(e, ext) == 0));
+    LPCWSTR e = PathFindExtensionW(path.c_str());
+    return (e && (_wcsicmp(e, ext) == 0));
 }
-
 
 /**
  * Return filename without extension for menu labels.
  */
-static std::wstring FileStem(const std::wstring& fileName)
+static std::wstring FileStem(const std::wstring &fileName)
 {
-WCHAR copy[MAX_PATH];
-wcsncpy_s(copy, _countof(copy), fileName.c_str(), _TRUNCATE);
-PathRemoveExtensionW(copy);
-return std::wstring(copy);
+    WCHAR copy[MAX_PATH];
+    wcsncpy_s(copy, _countof(copy), fileName.c_str(), _TRUNCATE);
+    PathRemoveExtensionW(copy);
+    return std::wstring(copy);
 }
-
 
 /**
  * Return the installation icons folder path.
  */
 static std::wstring BuildIconsFolderPath()
 {
-return std::wstring(myPathGlobal) + L"icons";
+    return std::wstring(myPathGlobal) + L"icons";
 }
-
 
 /**
  * Return the path to the cached Windows icon library list in the install folder.
  */
 static std::wstring BuildSystemIconCachePath()
 {
-return std::wstring(myPathGlobal) + SYSTEM_ICON_CACHE_FILE;
+    return std::wstring(myPathGlobal) + SYSTEM_ICON_CACHE_FILE;
 }
-
 
 /**
  * Return the Windows root directory path (for example C:\\Windows).
  */
 static std::wstring GetWindowsRootPath()
 {
-WCHAR windowsPath[MAX_PATH] = {};
-UINT len = GetWindowsDirectoryW(windowsPath, _countof(windowsPath));
-if ((len == 0) || (len >= _countof(windowsPath)))
-return std::wstring();
+    WCHAR windowsPath[MAX_PATH] = {};
+    UINT len = GetWindowsDirectoryW(windowsPath, _countof(windowsPath));
+    if ((len == 0) || (len >= _countof(windowsPath)))
+        return std::wstring();
 
-std::wstring out = windowsPath;
-while (!out.empty() && ((out.back() == L'\\') || (out.back() == L'/')))
-out.pop_back();
-return out;
+    std::wstring out = windowsPath;
+    while (!out.empty() && ((out.back() == L'\\') || (out.back() == L'/')))
+        out.pop_back();
+    return out;
 }
-
 
 /**
  * Return TRUE when the path extension is .dll or .exe.
  */
-static BOOL IsDllOrExePath(const std::wstring& filePath)
+static BOOL IsDllOrExePath(const std::wstring &filePath)
 {
-LPCWSTR ext = PathFindExtensionW(filePath.c_str());
-if (!ext || !ext[0])
-return FALSE;
+    LPCWSTR ext = PathFindExtensionW(filePath.c_str());
+    if (!ext || !ext[0])
+        return FALSE;
 
-return ((_wcsicmp(ext, L".dll") == 0) || (_wcsicmp(ext, L".exe") == 0));
+    return ((_wcsicmp(ext, L".dll") == 0) || (_wcsicmp(ext, L".exe") == 0));
 }
-
 
 /**
  * Discover Windows DLL/EXE files that contain at least one icon.
  */
-static BOOL DiscoverSystemIconLibraryPaths(std::vector<std::wstring>& outPaths)
+static BOOL DiscoverSystemIconLibraryPaths(std::vector<std::wstring> &outPaths)
 {
-outPaths.clear();
-ResetInstallDiscoveryCancel();
+    outPaths.clear();
+    ResetInstallDiscoveryCancel();
 
-std::wstring windowsRoot = GetWindowsRootPath();
-if (windowsRoot.empty())
-return FALSE;
+    std::wstring windowsRoot = GetWindowsRootPath();
+    if (windowsRoot.empty())
+        return FALSE;
 
-std::vector<std::wstring> directories;
-directories.push_back(windowsRoot);
+    std::vector<std::wstring> directories;
+    directories.push_back(windowsRoot);
 
-while (!directories.empty())
-{
-if (IsInstallDiscoveryCancelRequested())
-return FALSE;
+    while (!directories.empty())
+    {
+        if (IsInstallDiscoveryCancelRequested())
+            return FALSE;
 
-std::wstring dirPath = directories.back();
-directories.pop_back();
+        std::wstring dirPath = directories.back();
+        directories.pop_back();
 
-std::wstring pattern = dirPath + L"\\*";
-WIN32_FIND_DATAW fd = {};
-HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
-if (hFind == INVALID_HANDLE_VALUE)
-continue;
+        std::wstring pattern = dirPath + L"\\*";
+        WIN32_FIND_DATAW fd = {};
+        HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+        if (hFind == INVALID_HANDLE_VALUE)
+            continue;
 
-do
-{
-if (IsInstallDiscoveryCancelRequested())
-{
-FindClose(hFind);
-return FALSE;
-}
+        do
+        {
+            if (IsInstallDiscoveryCancelRequested())
+            {
+                FindClose(hFind);
+                return FALSE;
+            }
 
-if ((wcscmp(fd.cFileName, L".") == 0) || (wcscmp(fd.cFileName, L"..") == 0))
-continue;
+            if ((wcscmp(fd.cFileName, L".") == 0) || (wcscmp(fd.cFileName, L"..") == 0))
+                continue;
 
-std::wstring fullPath = dirPath + L"\\" + fd.cFileName;
-if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-{
-if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
-directories.push_back(fullPath);
-continue;
-}
+            std::wstring fullPath = dirPath + L"\\" + fd.cFileName;
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+            {
+                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+                    directories.push_back(fullPath);
+                continue;
+            }
 
-if (!IsDllOrExePath(fullPath))
-continue;
+            if (!IsDllOrExePath(fullPath))
+                continue;
 
-UINT iconCount = ExtractIconExW(fullPath.c_str(), -1, NULL, NULL, 0);
-if ((iconCount == UINT_MAX) || (iconCount == 0))
-continue;
+            UINT iconCount = ExtractIconExW(fullPath.c_str(), -1, NULL, NULL, 0);
+            if ((iconCount == UINT_MAX) || (iconCount == 0))
+                continue;
 
-outPaths.push_back(fullPath);
-if (gInstallDiscoveryProgressCallback)
-gInstallDiscoveryProgressCallback(fullPath.c_str(), gInstallDiscoveryProgressUserData);
-}
-while (FindNextFileW(hFind, &fd));
+            outPaths.push_back(fullPath);
+            if (gInstallDiscoveryProgressCallback)
+                gInstallDiscoveryProgressCallback(fullPath.c_str(), gInstallDiscoveryProgressUserData);
+        } while (FindNextFileW(hFind, &fd));
 
-FindClose(hFind);
-}
+        FindClose(hFind);
+    }
 
-std::sort(outPaths.begin(), outPaths.end(), [](const std::wstring& left, const std::wstring& right)
-{
+    std::sort(outPaths.begin(), outPaths.end(), [](const std::wstring &left, const std::wstring &right)
+              {
 LPCWSTR leftName = PathFindFileNameW(left.c_str());
 LPCWSTR rightName = PathFindFileNameW(right.c_str());
 int byName = _wcsicmp(leftName ? leftName : left.c_str(), rightName ? rightName : right.c_str());
 if (byName != 0)
 return (byName < 0);
 
-return (_wcsicmp(left.c_str(), right.c_str()) < 0);
-});
+return (_wcsicmp(left.c_str(), right.c_str()) < 0); });
 
-return !IsInstallDiscoveryCancelRequested();
+    return !IsInstallDiscoveryCancelRequested();
 }
-
 
 /**
  * Persist discovered Windows icon library paths into the install cache file.
  */
-static void WriteSystemIconCacheFile(const std::vector<std::wstring>& libraryPaths)
+static void WriteSystemIconCacheFile(const std::vector<std::wstring> &libraryPaths)
 {
-std::wstring cachePath = BuildSystemIconCachePath();
-FILE* fp = NULL;
-errno_t err = _wfopen_s(&fp, cachePath.c_str(), L"wt, ccs=UNICODE");
-if ((err != 0) || !fp)
-CRITICAL_API_ERRNO(_wfopen_s, err);
+    std::wstring cachePath = BuildSystemIconCachePath();
+    FILE *fp = NULL;
+    errno_t err = _wfopen_s(&fp, cachePath.c_str(), L"wt, ccs=UNICODE");
+    if ((err != 0) || !fp)
+        CRITICAL_API_ERRNO(_wfopen_s, err);
 
-for (size_t i = 0; i < libraryPaths.size(); i++)
-fwprintf(fp, L"%s\n", libraryPaths[i].c_str());
+    for (size_t i = 0; i < libraryPaths.size(); i++)
+        fwprintf(fp, L"%s\n", libraryPaths[i].c_str());
 
-fclose(fp);
+    fclose(fp);
 }
-
 
 /**
  * Rebuild the Windows icon library cache used by the runtime picker.
  */
 static BOOL RebuildSystemIconCache()
 {
-std::vector<std::wstring> libraryPaths;
-if (!DiscoverSystemIconLibraryPaths(libraryPaths))
-return FALSE;
+    std::vector<std::wstring> libraryPaths;
+    if (!DiscoverSystemIconLibraryPaths(libraryPaths))
+        return FALSE;
 
-WriteSystemIconCacheFile(libraryPaths);
-return TRUE;
+    WriteSystemIconCacheFile(libraryPaths);
+    return TRUE;
 }
-
 
 void RebuildSystemIconCacheOnly()
 {
-RebuildSystemIconCache();
+    RebuildSystemIconCache();
 }
-
 
 /**
  * Install our shell integration and files, but leave icon cache rebuilding to the caller.
  */
 static void InstallCore(BOOL rebuildIconCache)
 {
-// Create installation folder
-if (!CreateDirectoryW(myPathGlobal, NULL))
-{
-DWORD gle = GetLastError();
-if (gle != ERROR_ALREADY_EXISTS)
-CRITICAL_API_FAIL(CreateDirectoryW, gle);
+    // Create installation folder
+    if (!CreateDirectoryW(myPathGlobal, NULL))
+    {
+        DWORD gle = GetLastError();
+        if (gle != ERROR_ALREADY_EXISTS)
+            CRITICAL_API_FAIL(CreateDirectoryW, gle);
+    }
+
+    // Copy ourself there
+    // ------------------------------------------------------------------------
+    WCHAR myPath[MAX_PATH];
+    if (!GetModuleFileNameW(NULL, myPath, _countof(myPath)))
+        CRITICAL_API_FAIL(GetModuleFileNameW, GetLastError());
+
+    if (!StopOtherFoldrionProcesses())
+        CRITICAL("Unable to stop other running Foldrion.exe processes before installation.");
+
+    WCHAR targetPath[MAX_PATH];
+    if (_snwprintf_s(targetPath, _countof(targetPath), _countof(targetPath) - 1, L"%s%s", myPathGlobal, TARGET_NAME_W) < 1)
+        CRITICAL("Path size limit error!");
+
+    if (!CopyFileW(myPath, targetPath, FALSE))
+        CRITICAL_API_FAIL(CopyFileW, GetLastError());
+    // ------------------------------------------------------------------------
+
+    // And "README.md" file if it exists
+    // #TODO: Could have README.md as an embedded resource and extract it on demand
+    if (PathRemoveFileSpecW(myPath))
+    {
+        if (wcscat_s(myPath, _countof(myPath), L"\\README.md") != 0)
+            CRITICAL("Path size limit error!");
+
+        if (_snwprintf_s(targetPath, _countof(targetPath), _countof(targetPath) - 1, L"%sREADME.md", myPathGlobal) < 1)
+            CRITICAL("Path size limit error!");
+
+        CopyFileW(myPath, targetPath, FALSE);
+    }
+
+    // Ensure custom icons folder exists
+    WCHAR iconsPath[MAX_PATH];
+    if (_snwprintf_s(iconsPath, _countof(iconsPath), (_countof(iconsPath) - 1), L"%sicons", myPathGlobal) < 1)
+        CRITICAL("Path size limit error!");
+    if (!CreateDirectoryW(iconsPath, NULL))
+    {
+        DWORD gle = GetLastError();
+        if (gle != ERROR_ALREADY_EXISTS)
+            CRITICAL_API_FAIL(CreateDirectoryW, gle);
+    }
+
+    if (rebuildIconCache)
+        RebuildSystemIconCache();
+
+    // ------------------------------------------------------------------------
+
+    // TODO: Put UAC trick stuff here
+
+    // ------------------------------------------------------------------------
+
+    CreateStartMenuShortcut();
+
+    RefreshInstalledShellMenu();
 }
-
-// Copy ourself there
-// ------------------------------------------------------------------------
-WCHAR myPath[MAX_PATH];
-if(!GetModuleFileNameW(NULL, myPath, _countof(myPath)))
-CRITICAL_API_FAIL(GetModuleFileNameW, GetLastError());
-
-if (!StopOtherFoldrionProcesses())
-CRITICAL("Unable to stop other running Foldrion.exe processes before installation.");
-
-WCHAR myName[_MAX_FNAME];
-if (!GetModuleBaseNameW(GetCurrentProcess(), NULL, myName, _countof(myName)))
-CRITICAL_API_FAIL(GetModuleBaseNameW, GetLastError());
-WCHAR targetPath[MAX_PATH];
-if(_snwprintf_s(targetPath, _countof(targetPath), _countof(targetPath)-1, L"%s%s", myPathGlobal, myName) < 1)
-CRITICAL("Path size limit error!");
-
-if(!CopyFileW(myPath, targetPath, FALSE))
-CRITICAL_API_FAIL(CopyFileW, GetLastError());
-// ------------------------------------------------------------------------
-
-// And "README.md" file if it exists
-// #TODO: Could have README.md as an embedded resource and extract it on demand
-if (PathRemoveFileSpecW(myPath))
-{
-if (wcscat_s(myPath, _countof(myPath), L"\\README.md") != 0)
-CRITICAL("Path size limit error!");
-
-if (_snwprintf_s(targetPath, _countof(targetPath), _countof(targetPath)-1, L"%sREADME.md", myPathGlobal) < 1)
-CRITICAL("Path size limit error!");
-
-CopyFileW(myPath, targetPath, FALSE);
-}
-
-// Ensure custom icons folder exists
-WCHAR iconsPath[MAX_PATH];
-if (_snwprintf_s(iconsPath, _countof(iconsPath), (_countof(iconsPath) - 1), L"%sicons", myPathGlobal) < 1)
-CRITICAL("Path size limit error!");
-if (!CreateDirectoryW(iconsPath, NULL))
-{
-DWORD gle = GetLastError();
-if (gle != ERROR_ALREADY_EXISTS)
-CRITICAL_API_FAIL(CreateDirectoryW, gle);
-}
-
-if (rebuildIconCache)
-RebuildSystemIconCache();
-
-// ------------------------------------------------------------------------
-
-// TODO: Put UAC trick stuff here
-
-
-// ------------------------------------------------------------------------
-
-CreateStartMenuShortcut();
-
-RefreshInstalledShellMenu();
-}
-
 
 /**
  * Return the file name portion of an absolute path.
  */
-static std::wstring FileNameFromPath(const std::wstring& fullPath)
+static std::wstring FileNameFromPath(const std::wstring &fullPath)
 {
-LPCWSTR fileName = PathFindFileNameW(fullPath.c_str());
-return fileName ? std::wstring(fileName) : std::wstring();
+    LPCWSTR fileName = PathFindFileNameW(fullPath.c_str());
+    return fileName ? std::wstring(fileName) : std::wstring();
 }
-
 
 /**
  * Return TRUE when the file extension is a convertible bitmap format.
  */
-static BOOL IsConvertibleImageFile(const std::wstring& path)
+static BOOL IsConvertibleImageFile(const std::wstring &path)
 {
-return HasExt(path, L".png") || HasExt(path, L".jpg") || HasExt(path, L".jpeg");
+    return HasExt(path, L".png") || HasExt(path, L".jpg") || HasExt(path, L".jpeg");
 }
-
 
 /**
  * Build a destination path that does not collide with existing files.
  */
-static std::wstring MakeUniqueDestinationPath(const std::wstring& dirPath, const std::wstring& fileName)
+static std::wstring MakeUniqueDestinationPath(const std::wstring &dirPath, const std::wstring &fileName)
 {
-WCHAR baseName[MAX_PATH];
-WCHAR extension[MAX_PATH];
-_wsplitpath_s(fileName.c_str(), NULL, 0, NULL, 0, baseName, _countof(baseName), extension, _countof(extension));
+    WCHAR baseName[MAX_PATH];
+    WCHAR extension[MAX_PATH];
+    _wsplitpath_s(fileName.c_str(), NULL, 0, NULL, 0, baseName, _countof(baseName), extension, _countof(extension));
 
-std::wstring candidate = dirPath + L"\\" + fileName;
-if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES)
-return candidate;
+    std::wstring candidate = dirPath + L"\\" + fileName;
+    if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES)
+        return candidate;
 
-for (UINT suffix = 1; suffix < 10000; suffix++)
-{
-WCHAR uniqueName[MAX_PATH];
-if (_snwprintf_s(uniqueName, _countof(uniqueName), (_countof(uniqueName) - 1), L"%s (%u)%s", baseName, suffix, extension) < 1)
-continue;
+    for (UINT suffix = 1; suffix < 10000; suffix++)
+    {
+        WCHAR uniqueName[MAX_PATH];
+        if (_snwprintf_s(uniqueName, _countof(uniqueName), (_countof(uniqueName) - 1), L"%s (%u)%s", baseName, suffix, extension) < 1)
+            continue;
 
-candidate = dirPath + L"\\" + uniqueName;
-if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES)
-return candidate;
+        candidate = dirPath + L"\\" + uniqueName;
+        if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES)
+            return candidate;
+    }
+
+    return std::wstring();
 }
-
-return std::wstring();
-}
-
 
 /**
  * Release a COM interface pointer safely.
  */
-template<typename T>
-static void SafeRelease(T*& ptr)
+template <typename T>
+static void SafeRelease(T *&ptr)
 {
-if (ptr)
-{
-ptr->Release();
-ptr = NULL;
+    if (ptr)
+    {
+        ptr->Release();
+        ptr = NULL;
+    }
 }
-}
-
 
 /**
  * Build absolute path for the shared Start Menu shortcut.
  */
 static std::wstring BuildCommonStartMenuShortcutPath()
 {
-PWSTR programsPath = NULL;
-HRESULT hr = SHGetKnownFolderPath(FOLDERID_CommonPrograms, KF_FLAG_DEFAULT, NULL, &programsPath);
-if (FAILED(hr))
-CRITICAL_API_FAIL(SHGetKnownFolderPath, hr);
+    PWSTR programsPath = NULL;
+    HRESULT hr = SHGetKnownFolderPath(FOLDERID_CommonPrograms, KF_FLAG_DEFAULT, NULL, &programsPath);
+    if (FAILED(hr))
+        CRITICAL_API_FAIL(SHGetKnownFolderPath, hr);
 
-std::wstring linkPath = programsPath;
-CoTaskMemFree(programsPath);
+    std::wstring linkPath = programsPath;
+    CoTaskMemFree(programsPath);
 
-if (linkPath.empty())
-CRITICAL("Start Menu path could not be resolved.");
+    if (linkPath.empty())
+        CRITICAL("Start Menu path could not be resolved.");
 
-if (linkPath.back() != L'\\')
-linkPath += L"\\";
-linkPath += L"Foldrion.lnk";
-return linkPath;
+    if (linkPath.back() != L'\\')
+        linkPath += L"\\";
+    linkPath += L"Foldrion.lnk";
+    return linkPath;
 }
-
 
 /**
  * Create or overwrite the shared Start Menu shortcut for Foldrion.
  */
 static void CreateStartMenuShortcut()
 {
-std::wstring exePath = BuildInstalledExePath();
-std::wstring linkPath = BuildCommonStartMenuShortcutPath();
+    std::wstring exePath = BuildInstalledExePath();
+    std::wstring linkPath = BuildCommonStartMenuShortcutPath();
 
-std::wstring workingDir = myPathGlobal;
-if (!workingDir.empty() && (workingDir.back() == L'\\'))
-workingDir.resize(workingDir.size() - 1);
+    std::wstring workingDir = myPathGlobal;
+    if (!workingDir.empty() && (workingDir.back() == L'\\'))
+        workingDir.resize(workingDir.size() - 1);
 
-HRESULT hrInit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-BOOL shouldUninitialize = SUCCEEDED(hrInit);
-if ((hrInit != S_OK) && (hrInit != S_FALSE) && (hrInit != RPC_E_CHANGED_MODE))
-CRITICAL_API_FAIL(CoInitializeEx, hrInit);
+    HRESULT hrInit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    BOOL shouldUninitialize = SUCCEEDED(hrInit);
+    if ((hrInit != S_OK) && (hrInit != S_FALSE) && (hrInit != RPC_E_CHANGED_MODE))
+        CRITICAL_API_FAIL(CoInitializeEx, hrInit);
 
-IShellLinkW* shellLink = NULL;
-IPersistFile* persistFile = NULL;
+    IShellLinkW *shellLink = NULL;
+    IPersistFile *persistFile = NULL;
 
-HRESULT hr = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shellLink));
-if (FAILED(hr))
-CRITICAL_API_FAIL(CoCreateInstance, hr);
+    HRESULT hr = CoCreateInstance(CLSID_ShellLink, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&shellLink));
+    if (FAILED(hr))
+        CRITICAL_API_FAIL(CoCreateInstance, hr);
 
-hr = shellLink->SetPath(exePath.c_str());
-if (FAILED(hr))
-CRITICAL_API_FAIL(IShellLinkW_SetPath, hr);
+    hr = shellLink->SetPath(exePath.c_str());
+    if (FAILED(hr))
+        CRITICAL_API_FAIL(IShellLinkW_SetPath, hr);
 
-hr = shellLink->SetWorkingDirectory(workingDir.c_str());
-if (FAILED(hr))
-CRITICAL_API_FAIL(IShellLinkW_SetWorkingDirectory, hr);
+    hr = shellLink->SetWorkingDirectory(workingDir.c_str());
+    if (FAILED(hr))
+        CRITICAL_API_FAIL(IShellLinkW_SetWorkingDirectory, hr);
 
-hr = shellLink->SetDescription(L"Foldrion");
-if (FAILED(hr))
-CRITICAL_API_FAIL(IShellLinkW_SetDescription, hr);
+    hr = shellLink->SetDescription(L"Foldrion");
+    if (FAILED(hr))
+        CRITICAL_API_FAIL(IShellLinkW_SetDescription, hr);
 
-hr = shellLink->SetIconLocation(exePath.c_str(), 0);
-if (FAILED(hr))
-CRITICAL_API_FAIL(IShellLinkW_SetIconLocation, hr);
+    hr = shellLink->SetIconLocation(exePath.c_str(), 0);
+    if (FAILED(hr))
+        CRITICAL_API_FAIL(IShellLinkW_SetIconLocation, hr);
 
-hr = shellLink->QueryInterface(IID_PPV_ARGS(&persistFile));
-if (FAILED(hr))
-CRITICAL_API_FAIL(IShellLinkW_QueryInterface, hr);
+    hr = shellLink->QueryInterface(IID_PPV_ARGS(&persistFile));
+    if (FAILED(hr))
+        CRITICAL_API_FAIL(IShellLinkW_QueryInterface, hr);
 
-hr = persistFile->Save(linkPath.c_str(), TRUE);
-if (FAILED(hr))
-CRITICAL_API_FAIL(IPersistFile_Save, hr);
+    hr = persistFile->Save(linkPath.c_str(), TRUE);
+    if (FAILED(hr))
+        CRITICAL_API_FAIL(IPersistFile_Save, hr);
 
-SafeRelease(persistFile);
-SafeRelease(shellLink);
+    SafeRelease(persistFile);
+    SafeRelease(shellLink);
 
-if (shouldUninitialize)
-CoUninitialize();
+    if (shouldUninitialize)
+        CoUninitialize();
 
-SHChangeNotify(SHCNE_CREATE, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, linkPath.c_str(), NULL);
+    SHChangeNotify(SHCNE_CREATE, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, linkPath.c_str(), NULL);
 }
-
 
 /**
  * Remove the shared Start Menu shortcut for Foldrion if present.
  */
 static void RemoveStartMenuShortcut()
 {
-std::wstring linkPath = BuildCommonStartMenuShortcutPath();
-if (!DeleteFileW(linkPath.c_str()))
-{
-DWORD gle = GetLastError();
-if ((gle != ERROR_FILE_NOT_FOUND) && (gle != ERROR_PATH_NOT_FOUND))
-CRITICAL_API_FAIL(DeleteFileW, gle);
-}
+    std::wstring linkPath = BuildCommonStartMenuShortcutPath();
+    if (!DeleteFileW(linkPath.c_str()))
+    {
+        DWORD gle = GetLastError();
+        if ((gle != ERROR_FILE_NOT_FOUND) && (gle != ERROR_PATH_NOT_FOUND))
+            CRITICAL_API_FAIL(DeleteFileW, gle);
+    }
 
-SHChangeNotify(SHCNE_DELETE, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, linkPath.c_str(), NULL);
+    SHChangeNotify(SHCNE_DELETE, SHCNF_PATHW | SHCNF_FLUSHNOWAIT, linkPath.c_str(), NULL);
 }
-
 
 #pragma pack(push, 1)
 struct ICONDIRHEADER
 {
-WORD idReserved;
-WORD idType;
-WORD idCount;
+    WORD idReserved;
+    WORD idType;
+    WORD idCount;
 };
 
 struct ICONDIRENTRYFILE
 {
-BYTE bWidth;
-BYTE bHeight;
-BYTE bColorCount;
-BYTE bReserved;
-WORD wPlanes;
-WORD wBitCount;
-DWORD dwBytesInRes;
-DWORD dwImageOffset;
+    BYTE bWidth;
+    BYTE bHeight;
+    BYTE bColorCount;
+    BYTE bReserved;
+    WORD wPlanes;
+    WORD wBitCount;
+    DWORD dwBytesInRes;
+    DWORD dwImageOffset;
 };
 #pragma pack(pop)
-
 
 /**
  * Copy a selected source into a padded square BGRA canvas suitable for an icon.
  */
-static HRESULT LoadImageAsSquareBgra(LPCWSTR sourcePath, std::vector<BYTE>& pixels, UINT& canvasSize)
+static HRESULT LoadImageAsSquareBgra(LPCWSTR sourcePath, std::vector<BYTE> &pixels, UINT &canvasSize)
 {
-HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-BOOL shouldUninitialize = SUCCEEDED(hr);
-if ((hr != S_OK) && (hr != S_FALSE) && (hr != RPC_E_CHANGED_MODE))
-return hr;
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    BOOL shouldUninitialize = SUCCEEDED(hr);
+    if ((hr != S_OK) && (hr != S_FALSE) && (hr != RPC_E_CHANGED_MODE))
+        return hr;
 
-IWICImagingFactory* factory = NULL;
-IWICBitmapDecoder* decoder = NULL;
-IWICBitmapFrameDecode* frame = NULL;
-IWICBitmapSource* scaledSource = NULL;
-IWICBitmapScaler* scaler = NULL;
-IWICFormatConverter* converter = NULL;
+    IWICImagingFactory *factory = NULL;
+    IWICBitmapDecoder *decoder = NULL;
+    IWICBitmapFrameDecode *frame = NULL;
+    IWICBitmapSource *scaledSource = NULL;
+    IWICBitmapScaler *scaler = NULL;
+    IWICFormatConverter *converter = NULL;
 
-do
-{
-hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
-if (FAILED(hr))
-break;
+    do
+    {
+        hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+        if (FAILED(hr))
+            break;
 
-hr = factory->CreateDecoderFromFilename(sourcePath, NULL, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder);
-if (FAILED(hr))
-break;
+        hr = factory->CreateDecoderFromFilename(sourcePath, NULL, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder);
+        if (FAILED(hr))
+            break;
 
-hr = decoder->GetFrame(0, &frame);
-if (FAILED(hr))
-break;
+        hr = decoder->GetFrame(0, &frame);
+        if (FAILED(hr))
+            break;
 
-UINT srcWidth = 0;
-UINT srcHeight = 0;
-hr = frame->GetSize(&srcWidth, &srcHeight);
-if (FAILED(hr) || (srcWidth == 0) || (srcHeight == 0))
-{
-if (SUCCEEDED(hr))
-hr = E_FAIL;
-break;
+        UINT srcWidth = 0;
+        UINT srcHeight = 0;
+        hr = frame->GetSize(&srcWidth, &srcHeight);
+        if (FAILED(hr) || (srcWidth == 0) || (srcHeight == 0))
+        {
+            if (SUCCEEDED(hr))
+                hr = E_FAIL;
+            break;
+        }
+
+        UINT maxDim = (srcWidth > srcHeight) ? srcWidth : srcHeight;
+        canvasSize = (maxDim > 256) ? 256 : maxDim;
+        if (canvasSize == 0)
+            canvasSize = 1;
+
+        double scale = (maxDim > 256) ? (256.0 / double(maxDim)) : 1.0;
+        UINT drawWidth = (UINT)((double(srcWidth) * scale) + 0.5);
+        UINT drawHeight = (UINT)((double(srcHeight) * scale) + 0.5);
+        if (drawWidth == 0)
+            drawWidth = 1;
+        if (drawHeight == 0)
+            drawHeight = 1;
+
+        IWICBitmapSource *sourceForConvert = frame;
+        if ((drawWidth != srcWidth) || (drawHeight != srcHeight))
+        {
+            hr = factory->CreateBitmapScaler(&scaler);
+            if (FAILED(hr))
+                break;
+
+            hr = scaler->Initialize(frame, drawWidth, drawHeight, WICBitmapInterpolationModeFant);
+            if (FAILED(hr))
+                break;
+
+            scaledSource = scaler;
+            sourceForConvert = scaledSource;
+        }
+
+        hr = factory->CreateFormatConverter(&converter);
+        if (FAILED(hr))
+            break;
+
+        hr = converter->Initialize(sourceForConvert, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, NULL, 0.0, WICBitmapPaletteTypeCustom);
+        if (FAILED(hr))
+            break;
+
+        UINT drawStride = drawWidth * 4;
+        std::vector<BYTE> drawPixels(drawStride * drawHeight);
+        hr = converter->CopyPixels(NULL, drawStride, (UINT)drawPixels.size(), drawPixels.data());
+        if (FAILED(hr))
+            break;
+
+        UINT canvasStride = canvasSize * 4;
+        pixels.assign(canvasStride * canvasSize, 0);
+        UINT offsetX = (canvasSize - drawWidth) / 2;
+        UINT offsetY = (canvasSize - drawHeight) / 2;
+
+        for (UINT y = 0; y < drawHeight; y++)
+            memcpy(&pixels[((y + offsetY) * canvasStride) + (offsetX * 4)], &drawPixels[y * drawStride], drawStride);
+    } while (FALSE);
+
+    SafeRelease(converter);
+    SafeRelease(scaler);
+    SafeRelease(scaledSource);
+    SafeRelease(frame);
+    SafeRelease(decoder);
+    SafeRelease(factory);
+
+    if (shouldUninitialize)
+        CoUninitialize();
+
+    return hr;
 }
-
-UINT maxDim = (srcWidth > srcHeight) ? srcWidth : srcHeight;
-canvasSize = (maxDim > 256) ? 256 : maxDim;
-if (canvasSize == 0)
-canvasSize = 1;
-
-double scale = (maxDim > 256) ? (256.0 / double(maxDim)) : 1.0;
-UINT drawWidth = (UINT) ((double(srcWidth) * scale) + 0.5);
-UINT drawHeight = (UINT) ((double(srcHeight) * scale) + 0.5);
-if (drawWidth == 0)
-drawWidth = 1;
-if (drawHeight == 0)
-drawHeight = 1;
-
-IWICBitmapSource* sourceForConvert = frame;
-if ((drawWidth != srcWidth) || (drawHeight != srcHeight))
-{
-hr = factory->CreateBitmapScaler(&scaler);
-if (FAILED(hr))
-break;
-
-hr = scaler->Initialize(frame, drawWidth, drawHeight, WICBitmapInterpolationModeFant);
-if (FAILED(hr))
-break;
-
-scaledSource = scaler;
-sourceForConvert = scaledSource;
-}
-
-hr = factory->CreateFormatConverter(&converter);
-if (FAILED(hr))
-break;
-
-hr = converter->Initialize(sourceForConvert, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, NULL, 0.0, WICBitmapPaletteTypeCustom);
-if (FAILED(hr))
-break;
-
-UINT drawStride = drawWidth * 4;
-std::vector<BYTE> drawPixels(drawStride * drawHeight);
-hr = converter->CopyPixels(NULL, drawStride, (UINT) drawPixels.size(), drawPixels.data());
-if (FAILED(hr))
-break;
-
-UINT canvasStride = canvasSize * 4;
-pixels.assign(canvasStride * canvasSize, 0);
-UINT offsetX = (canvasSize - drawWidth) / 2;
-UINT offsetY = (canvasSize - drawHeight) / 2;
-
-for (UINT y = 0; y < drawHeight; y++)
-memcpy(&pixels[((y + offsetY) * canvasStride) + (offsetX * 4)], &drawPixels[y * drawStride], drawStride);
-}
-while (FALSE);
-
-SafeRelease(converter);
-SafeRelease(scaler);
-SafeRelease(scaledSource);
-SafeRelease(frame);
-SafeRelease(decoder);
-SafeRelease(factory);
-
-if (shouldUninitialize)
-CoUninitialize();
-
-return hr;
-}
-
 
 /**
  * Encode a BGRA square bitmap into a PNG byte buffer using WIC.
  */
-static HRESULT EncodeSquarePng(const std::vector<BYTE>& pixels, UINT canvasSize, std::vector<BYTE>& pngData)
+static HRESULT EncodeSquarePng(const std::vector<BYTE> &pixels, UINT canvasSize, std::vector<BYTE> &pngData)
 {
-HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-BOOL shouldUninitialize = SUCCEEDED(hr);
-if ((hr != S_OK) && (hr != S_FALSE) && (hr != RPC_E_CHANGED_MODE))
-return hr;
+    HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    BOOL shouldUninitialize = SUCCEEDED(hr);
+    if ((hr != S_OK) && (hr != S_FALSE) && (hr != RPC_E_CHANGED_MODE))
+        return hr;
 
-IWICImagingFactory* factory = NULL;
-IWICBitmap* bitmap = NULL;
-IWICBitmapEncoder* encoder = NULL;
-IWICBitmapFrameEncode* frame = NULL;
-IPropertyBag2* props = NULL;
-IStream* stream = NULL;
+    IWICImagingFactory *factory = NULL;
+    IWICBitmap *bitmap = NULL;
+    IWICBitmapEncoder *encoder = NULL;
+    IWICBitmapFrameEncode *frame = NULL;
+    IPropertyBag2 *props = NULL;
+    IStream *stream = NULL;
 
-do
-{
-hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
-if (FAILED(hr))
-break;
+    do
+    {
+        hr = CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+        if (FAILED(hr))
+            break;
 
-UINT stride = canvasSize * 4;
-hr = factory->CreateBitmapFromMemory(canvasSize, canvasSize, GUID_WICPixelFormat32bppBGRA, stride, (UINT) pixels.size(), const_cast<BYTE*>(pixels.data()), &bitmap);
-if (FAILED(hr))
-break;
+        UINT stride = canvasSize * 4;
+        hr = factory->CreateBitmapFromMemory(canvasSize, canvasSize, GUID_WICPixelFormat32bppBGRA, stride, (UINT)pixels.size(), const_cast<BYTE *>(pixels.data()), &bitmap);
+        if (FAILED(hr))
+            break;
 
-hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
-if (FAILED(hr))
-break;
+        hr = CreateStreamOnHGlobal(NULL, TRUE, &stream);
+        if (FAILED(hr))
+            break;
 
-hr = factory->CreateEncoder(GUID_ContainerFormatPng, NULL, &encoder);
-if (FAILED(hr))
-break;
+        hr = factory->CreateEncoder(GUID_ContainerFormatPng, NULL, &encoder);
+        if (FAILED(hr))
+            break;
 
-hr = encoder->Initialize(stream, WICBitmapEncoderNoCache);
-if (FAILED(hr))
-break;
+        hr = encoder->Initialize(stream, WICBitmapEncoderNoCache);
+        if (FAILED(hr))
+            break;
 
-hr = encoder->CreateNewFrame(&frame, &props);
-if (FAILED(hr))
-break;
+        hr = encoder->CreateNewFrame(&frame, &props);
+        if (FAILED(hr))
+            break;
 
-hr = frame->Initialize(props);
-if (FAILED(hr))
-break;
+        hr = frame->Initialize(props);
+        if (FAILED(hr))
+            break;
 
-hr = frame->SetSize(canvasSize, canvasSize);
-if (FAILED(hr))
-break;
+        hr = frame->SetSize(canvasSize, canvasSize);
+        if (FAILED(hr))
+            break;
 
-WICPixelFormatGUID pixelFormat = GUID_WICPixelFormat32bppBGRA;
-hr = frame->SetPixelFormat(&pixelFormat);
-if (FAILED(hr))
-break;
+        WICPixelFormatGUID pixelFormat = GUID_WICPixelFormat32bppBGRA;
+        hr = frame->SetPixelFormat(&pixelFormat);
+        if (FAILED(hr))
+            break;
 
-hr = frame->WriteSource(bitmap, NULL);
-if (FAILED(hr))
-break;
+        hr = frame->WriteSource(bitmap, NULL);
+        if (FAILED(hr))
+            break;
 
-hr = frame->Commit();
-if (FAILED(hr))
-break;
+        hr = frame->Commit();
+        if (FAILED(hr))
+            break;
 
-hr = encoder->Commit();
-if (FAILED(hr))
-break;
+        hr = encoder->Commit();
+        if (FAILED(hr))
+            break;
 
-STATSTG stat = {};
-hr = stream->Stat(&stat, STATFLAG_NONAME);
-if (FAILED(hr))
-break;
+        STATSTG stat = {};
+        hr = stream->Stat(&stat, STATFLAG_NONAME);
+        if (FAILED(hr))
+            break;
 
-pngData.resize((size_t) stat.cbSize.QuadPart);
-LARGE_INTEGER zero = {};
-hr = stream->Seek(zero, STREAM_SEEK_SET, NULL);
-if (FAILED(hr))
-break;
+        pngData.resize((size_t)stat.cbSize.QuadPart);
+        LARGE_INTEGER zero = {};
+        hr = stream->Seek(zero, STREAM_SEEK_SET, NULL);
+        if (FAILED(hr))
+            break;
 
-ULONG bytesRead = 0;
-hr = stream->Read(pngData.data(), (ULONG) pngData.size(), &bytesRead);
-if (FAILED(hr))
-break;
+        ULONG bytesRead = 0;
+        hr = stream->Read(pngData.data(), (ULONG)pngData.size(), &bytesRead);
+        if (FAILED(hr))
+            break;
 
-if (bytesRead != pngData.size())
-{
-hr = E_FAIL;
-break;
+        if (bytesRead != pngData.size())
+        {
+            hr = E_FAIL;
+            break;
+        }
+    } while (FALSE);
+
+    SafeRelease(props);
+    SafeRelease(frame);
+    SafeRelease(encoder);
+    SafeRelease(stream);
+    SafeRelease(bitmap);
+    SafeRelease(factory);
+
+    if (shouldUninitialize)
+        CoUninitialize();
+
+    return hr;
 }
-}
-while (FALSE);
-
-SafeRelease(props);
-SafeRelease(frame);
-SafeRelease(encoder);
-SafeRelease(stream);
-SafeRelease(bitmap);
-SafeRelease(factory);
-
-if (shouldUninitialize)
-CoUninitialize();
-
-return hr;
-}
-
 
 /**
  * Write a single-image ICO file that stores a PNG payload.
  */
-static HRESULT WritePngIcoFile(LPCWSTR targetPath, const std::vector<BYTE>& pngData, UINT canvasSize)
+static HRESULT WritePngIcoFile(LPCWSTR targetPath, const std::vector<BYTE> &pngData, UINT canvasSize)
 {
-ICONDIRHEADER header = { 0, 1, 1 };
-ICONDIRENTRYFILE entry = {};
-entry.bWidth = (canvasSize >= 256) ? 0 : (BYTE) canvasSize;
-entry.bHeight = (canvasSize >= 256) ? 0 : (BYTE) canvasSize;
-entry.bColorCount = 0;
-entry.bReserved = 0;
-entry.wPlanes = 1;
-entry.wBitCount = 32;
-entry.dwBytesInRes = (DWORD) pngData.size();
-entry.dwImageOffset = sizeof(header) + sizeof(entry);
+    ICONDIRHEADER header = {0, 1, 1};
+    ICONDIRENTRYFILE entry = {};
+    entry.bWidth = (canvasSize >= 256) ? 0 : (BYTE)canvasSize;
+    entry.bHeight = (canvasSize >= 256) ? 0 : (BYTE)canvasSize;
+    entry.bColorCount = 0;
+    entry.bReserved = 0;
+    entry.wPlanes = 1;
+    entry.wBitCount = 32;
+    entry.dwBytesInRes = (DWORD)pngData.size();
+    entry.dwImageOffset = sizeof(header) + sizeof(entry);
 
-HANDLE file = CreateFileW(targetPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-if (file == INVALID_HANDLE_VALUE)
-return HRESULT_FROM_WIN32(GetLastError());
+    HANDLE file = CreateFileW(targetPath, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE)
+        return HRESULT_FROM_WIN32(GetLastError());
 
-HRESULT hr = S_OK;
-DWORD written = 0;
-if (!WriteFile(file, &header, sizeof(header), &written, NULL) || (written != sizeof(header)))
-hr = HRESULT_FROM_WIN32(GetLastError());
-else if (!WriteFile(file, &entry, sizeof(entry), &written, NULL) || (written != sizeof(entry)))
-hr = HRESULT_FROM_WIN32(GetLastError());
-else if (!WriteFile(file, pngData.data(), (DWORD) pngData.size(), &written, NULL) || (written != pngData.size()))
-hr = HRESULT_FROM_WIN32(GetLastError());
+    HRESULT hr = S_OK;
+    DWORD written = 0;
+    if (!WriteFile(file, &header, sizeof(header), &written, NULL) || (written != sizeof(header)))
+        hr = HRESULT_FROM_WIN32(GetLastError());
+    else if (!WriteFile(file, &entry, sizeof(entry), &written, NULL) || (written != sizeof(entry)))
+        hr = HRESULT_FROM_WIN32(GetLastError());
+    else if (!WriteFile(file, pngData.data(), (DWORD)pngData.size(), &written, NULL) || (written != pngData.size()))
+        hr = HRESULT_FROM_WIN32(GetLastError());
 
-CloseHandle(file);
+    CloseHandle(file);
 
-if (FAILED(hr))
-DeleteFileW(targetPath);
+    if (FAILED(hr))
+        DeleteFileW(targetPath);
 
-return hr;
+    return hr;
 }
-
 
 /**
  * Convert a supported image file to an ICO file using a PNG-backed icon entry.
  */
 static HRESULT ConvertImageFileToIcoFile(LPCWSTR sourcePath, LPCWSTR targetPath)
 {
-std::vector<BYTE> pixels;
-std::vector<BYTE> pngData;
-UINT canvasSize = 0;
+    std::vector<BYTE> pixels;
+    std::vector<BYTE> pngData;
+    UINT canvasSize = 0;
 
-HRESULT hr = LoadImageAsSquareBgra(sourcePath, pixels, canvasSize);
-if (FAILED(hr))
-return hr;
+    HRESULT hr = LoadImageAsSquareBgra(sourcePath, pixels, canvasSize);
+    if (FAILED(hr))
+        return hr;
 
-hr = EncodeSquarePng(pixels, canvasSize, pngData);
-if (FAILED(hr))
-return hr;
+    hr = EncodeSquarePng(pixels, canvasSize, pngData);
+    if (FAILED(hr))
+        return hr;
 
-return WritePngIcoFile(targetPath, pngData, canvasSize);
+    return WritePngIcoFile(targetPath, pngData, canvasSize);
 }
-
 
 /**
  * Ask the user for one or more source files to import.
  */
-static BOOL SelectImportFiles(HWND owner, std::vector<std::wstring>& selectedFiles)
+static BOOL SelectImportFiles(HWND owner, std::vector<std::wstring> &selectedFiles)
 {
-std::vector<WCHAR> buffer(65536, 0);
-OPENFILENAMEW ofn = {};
-static const WCHAR filter[] =
-L"Supported files (*.ico;*.dll;*.jpg;*.jpeg;*.png)\0*.ico;*.dll;*.jpg;*.jpeg;*.png\0"
-L"Icon files (*.ico)\0*.ico\0"
-L"Dynamic libraries (*.dll)\0*.dll\0"
-L"Images (*.jpg;*.jpeg;*.png)\0*.jpg;*.jpeg;*.png\0"
-L"All files (*.*)\0*.*\0\0";
+    std::vector<WCHAR> buffer(65536, 0);
+    OPENFILENAMEW ofn = {};
+    static const WCHAR filter[] =
+        L"Supported files (*.ico;*.dll;*.jpg;*.jpeg;*.png)\0*.ico;*.dll;*.jpg;*.jpeg;*.png\0"
+        L"Icon files (*.ico)\0*.ico\0"
+        L"Dynamic libraries (*.dll)\0*.dll\0"
+        L"Images (*.jpg;*.jpeg;*.png)\0*.jpg;*.jpeg;*.png\0"
+        L"All files (*.*)\0*.*\0\0";
 
-ofn.lStructSize = sizeof(ofn);
-ofn.hwndOwner = owner;
-ofn.lpstrFilter = filter;
-ofn.lpstrFile = buffer.data();
-ofn.nMaxFile = (DWORD) buffer.size();
-ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_ALLOWMULTISELECT;
-ofn.lpstrTitle = L"Import Custom Icons";
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = filter;
+    ofn.lpstrFile = buffer.data();
+    ofn.nMaxFile = (DWORD)buffer.size();
+    ofn.Flags = OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_HIDEREADONLY | OFN_ALLOWMULTISELECT;
+    ofn.lpstrTitle = L"Import Custom Icons";
 
-if (!GetOpenFileNameW(&ofn))
-return FALSE;
+    if (!GetOpenFileNameW(&ofn))
+        return FALSE;
 
-LPCWSTR first = buffer.data();
-if (!first[0])
-return FALSE;
+    LPCWSTR first = buffer.data();
+    if (!first[0])
+        return FALSE;
 
-LPCWSTR second = first + wcslen(first) + 1;
-if (!second[0])
-{
-selectedFiles.push_back(first);
-return TRUE;
+    LPCWSTR second = first + wcslen(first) + 1;
+    if (!second[0])
+    {
+        selectedFiles.push_back(first);
+        return TRUE;
+    }
+
+    std::wstring folder = first;
+    while (second[0])
+    {
+        selectedFiles.push_back(folder + L"\\" + second);
+        second += wcslen(second) + 1;
+    }
+
+    return !selectedFiles.empty();
 }
-
-std::wstring folder = first;
-while (second[0])
-{
-selectedFiles.push_back(folder + L"\\" + second);
-second += wcslen(second) + 1;
-}
-
-return !selectedFiles.empty();
-}
-
 
 /**
  * Copy or convert selected files into the installation icons folder.
  */
-BOOL ImportCustomIconFiles(HWND owner, UINT* copiedCount, UINT* convertedCount, UINT* failedCount, std::vector<std::wstring>* failedFiles)
+BOOL ImportCustomIconFiles(HWND owner, UINT *copiedCount, UINT *convertedCount, UINT *failedCount, std::vector<std::wstring> *failedFiles)
 {
-if (copiedCount)
-*copiedCount = 0;
-if (convertedCount)
-*convertedCount = 0;
-if (failedCount)
-*failedCount = 0;
-if (failedFiles)
-failedFiles->clear();
+    if (copiedCount)
+        *copiedCount = 0;
+    if (convertedCount)
+        *convertedCount = 0;
+    if (failedCount)
+        *failedCount = 0;
+    if (failedFiles)
+        failedFiles->clear();
 
-std::vector<std::wstring> selectedFiles;
-if (!SelectImportFiles(owner, selectedFiles))
-return FALSE;
+    std::vector<std::wstring> selectedFiles;
+    if (!SelectImportFiles(owner, selectedFiles))
+        return FALSE;
 
-	if (!CreateDirectoryW(myPathGlobal, NULL))
-	{
-		DWORD gle = GetLastError();
-		if (gle != ERROR_ALREADY_EXISTS)
-		{
-			MessageBoxA(owner, "Unable to create install folder.", "Error:", (MB_OK | MB_ICONERROR));
-			return FALSE;
-		}
-	}
+    if (!CreateDirectoryW(myPathGlobal, NULL))
+    {
+        DWORD gle = GetLastError();
+        if (gle != ERROR_ALREADY_EXISTS)
+        {
+            MessageBoxA(owner, "Unable to create install folder.", "Error:", (MB_OK | MB_ICONERROR));
+            return FALSE;
+        }
+    }
 
-std::wstring iconsPath = BuildIconsFolderPath();
-if (!CreateDirectoryW(iconsPath.c_str(), NULL))
-{
-DWORD gle = GetLastError();
-if (gle != ERROR_ALREADY_EXISTS)
-{
-MessageBoxA(owner, "Unable to create icons folder.", "Error:", (MB_OK | MB_ICONERROR));
-return FALSE;
+    std::wstring iconsPath = BuildIconsFolderPath();
+    if (!CreateDirectoryW(iconsPath.c_str(), NULL))
+    {
+        DWORD gle = GetLastError();
+        if (gle != ERROR_ALREADY_EXISTS)
+        {
+            MessageBoxA(owner, "Unable to create icons folder.", "Error:", (MB_OK | MB_ICONERROR));
+            return FALSE;
+        }
+    }
+
+    UINT copied = 0;
+    UINT converted = 0;
+    UINT failed = 0;
+
+    for (size_t i = 0; i < selectedFiles.size(); i++)
+    {
+        const std::wstring &sourcePath = selectedFiles[i];
+        std::wstring fileName = FileNameFromPath(sourcePath);
+        if (fileName.empty())
+        {
+            if (failedFiles)
+                failedFiles->push_back(sourcePath);
+            failed++;
+            continue;
+        }
+
+        std::wstring destinationName = fileName;
+        if (IsConvertibleImageFile(sourcePath))
+            destinationName = FileStem(fileName) + L".ico";
+
+        std::wstring destinationPath = MakeUniqueDestinationPath(iconsPath, destinationName);
+        if (destinationPath.empty())
+        {
+            if (failedFiles)
+                failedFiles->push_back(fileName);
+            failed++;
+            continue;
+        }
+
+        if (HasExt(sourcePath, L".ico") || HasExt(sourcePath, L".dll"))
+        {
+            if (CopyFileW(sourcePath.c_str(), destinationPath.c_str(), TRUE))
+                copied++;
+            else
+            {
+                if (failedFiles)
+                    failedFiles->push_back(fileName);
+                failed++;
+            }
+        }
+        else if (IsConvertibleImageFile(sourcePath))
+        {
+            if (SUCCEEDED(ConvertImageFileToIcoFile(sourcePath.c_str(), destinationPath.c_str())))
+                converted++;
+            else
+            {
+                if (failedFiles)
+                    failedFiles->push_back(fileName);
+                failed++;
+            }
+        }
+        else
+        {
+            if (failedFiles)
+                failedFiles->push_back(fileName);
+            failed++;
+        }
+    }
+
+    if (copiedCount)
+        *copiedCount = copied;
+    if (convertedCount)
+        *convertedCount = converted;
+    if (failedCount)
+        *failedCount = failed;
+
+    return TRUE;
 }
-}
-
-UINT copied = 0;
-UINT converted = 0;
-UINT failed = 0;
-
-for (size_t i = 0; i < selectedFiles.size(); i++)
-{
-const std::wstring& sourcePath = selectedFiles[i];
-std::wstring fileName = FileNameFromPath(sourcePath);
-if (fileName.empty())
-{
-			if (failedFiles)
-				failedFiles->push_back(sourcePath);
-failed++;
-continue;
-}
-
-std::wstring destinationName = fileName;
-if (IsConvertibleImageFile(sourcePath))
-destinationName = FileStem(fileName) + L".ico";
-
-std::wstring destinationPath = MakeUniqueDestinationPath(iconsPath, destinationName);
-if (destinationPath.empty())
-{
-			if (failedFiles)
-				failedFiles->push_back(fileName);
-failed++;
-continue;
-}
-
-if (HasExt(sourcePath, L".ico") || HasExt(sourcePath, L".dll"))
-{
-if (CopyFileW(sourcePath.c_str(), destinationPath.c_str(), TRUE))
-copied++;
-else
-			{
-				if (failedFiles)
-					failedFiles->push_back(fileName);
-failed++;
-			}
-}
-else if (IsConvertibleImageFile(sourcePath))
-{
-if (SUCCEEDED(ConvertImageFileToIcoFile(sourcePath.c_str(), destinationPath.c_str())))
-converted++;
-else
-			{
-				if (failedFiles)
-					failedFiles->push_back(fileName);
-failed++;
-			}
-}
-else
-		{
-			if (failedFiles)
-				failedFiles->push_back(fileName);
-failed++;
-		}
-}
-
-if (copiedCount)
-*copiedCount = copied;
-if (convertedCount)
-*convertedCount = converted;
-if (failedCount)
-*failedCount = failed;
-
-return TRUE;
-}
-
 
 /**
  * Check recursively whether a folder has usable custom icon files.
  */
-static BOOL HasCustomItemsRecursive(const std::wstring& dirPath)
+static BOOL HasCustomItemsRecursive(const std::wstring &dirPath)
 {
-std::wstring pattern = dirPath + L"\\*";
-WIN32_FIND_DATAW fd;
-HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
-if (hFind == INVALID_HANDLE_VALUE)
-return FALSE;
+    std::wstring pattern = dirPath + L"\\*";
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE)
+        return FALSE;
 
-BOOL found = FALSE;
-do
-{
-if ((wcscmp(fd.cFileName, L".") == 0) || (wcscmp(fd.cFileName, L"..") == 0))
-continue;
+    BOOL found = FALSE;
+    do
+    {
+        if ((wcscmp(fd.cFileName, L".") == 0) || (wcscmp(fd.cFileName, L"..") == 0))
+            continue;
 
-std::wstring full = dirPath + L"\\" + fd.cFileName;
-if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-{
-if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && HasCustomItemsRecursive(full))
-{
-found = TRUE;
-break;
-}
-}
-else
-{
-if (HasExt(full, L".ico"))
-{
-found = TRUE;
-break;
-}
-if (HasExt(full, L".dll"))
-{
-UINT iconCount = ExtractIconExW(full.c_str(), -1, NULL, NULL, 0);
-if ((iconCount != UINT_MAX) && (iconCount > 0))
-{
-found = TRUE;
-break;
-}
-}
-}
-}
-while (FindNextFileW(hFind, &fd));
+        std::wstring full = dirPath + L"\\" + fd.cFileName;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+        {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) && HasCustomItemsRecursive(full))
+            {
+                found = TRUE;
+                break;
+            }
+        }
+        else
+        {
+            if (HasExt(full, L".ico"))
+            {
+                found = TRUE;
+                break;
+            }
+            if (HasExt(full, L".dll"))
+            {
+                UINT iconCount = ExtractIconExW(full.c_str(), -1, NULL, NULL, 0);
+                if ((iconCount != UINT_MAX) && (iconCount > 0))
+                {
+                    found = TRUE;
+                    break;
+                }
+            }
+        }
+    } while (FindNextFileW(hFind, &fd));
 
-FindClose(hFind);
-return found;
+    FindClose(hFind);
+    return found;
 }
-
 
 /**
  * Recursively write custom icon entries from the user icons folder.
  */
-static void WriteCustomEntries(HKEY parentShellKey, const std::wstring& dirPath, const std::wstring& exePath)
+static void WriteCustomEntries(HKEY parentShellKey, const std::wstring &dirPath, const std::wstring &exePath)
 {
-std::vector<std::wstring> directories;
-std::vector<std::wstring> files;
+    std::vector<std::wstring> directories;
+    std::vector<std::wstring> files;
 
-std::wstring pattern = dirPath + L"\\*";
-WIN32_FIND_DATAW fd;
-HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
-if (hFind == INVALID_HANDLE_VALUE)
-return;
+    std::wstring pattern = dirPath + L"\\*";
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+    if (hFind == INVALID_HANDLE_VALUE)
+        return;
 
-do
-{
-if ((wcscmp(fd.cFileName, L".") == 0) || (wcscmp(fd.cFileName, L"..") == 0))
-continue;
+    do
+    {
+        if ((wcscmp(fd.cFileName, L".") == 0) || (wcscmp(fd.cFileName, L"..") == 0))
+            continue;
 
-if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
-{
-if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
-directories.push_back(fd.cFileName);
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+        {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+                directories.push_back(fd.cFileName);
+        }
+        else
+        {
+            std::wstring full = dirPath + L"\\" + fd.cFileName;
+            if (HasExt(full, L".ico") || HasExt(full, L".dll"))
+                files.push_back(fd.cFileName);
+        }
+    } while (FindNextFileW(hFind, &fd));
+
+    FindClose(hFind);
+
+    auto sortNoCase = [](const std::wstring &a, const std::wstring &b)
+    {
+        return _wcsicmp(a.c_str(), b.c_str()) < 0;
+    };
+    std::sort(directories.begin(), directories.end(), sortNoCase);
+    std::sort(files.begin(), files.end(), sortNoCase);
+
+    UINT order = 0;
+
+    for (size_t i = 0; i < directories.size(); i++)
+    {
+        std::wstring full = dirPath + L"\\" + directories[i];
+        if (!HasCustomItemsRecursive(full))
+            continue;
+
+        HKEY submenuShell = AddSubmenu(parentShellKey, order, directories[i], L"");
+        WriteCustomEntries(submenuShell, full, exePath);
+        RegCloseKey(submenuShell);
+    }
+
+    for (size_t i = 0; i < files.size(); i++)
+    {
+        std::wstring full = dirPath + L"\\" + files[i];
+        if (HasExt(full, L".ico"))
+        {
+            std::wstring label = FileStem(files[i]);
+            std::wstring command = BuildResourceCommand(exePath, full, 0);
+            AddCommandItem(parentShellKey, order, label, L"", command, FALSE);
+        }
+        else if (HasExt(full, L".dll"))
+        {
+            UINT iconCount = ExtractIconExW(full.c_str(), -1, NULL, NULL, 0);
+            if ((iconCount == UINT_MAX) || (iconCount == 0))
+                continue;
+
+            HKEY dllShell = AddSubmenu(parentShellKey, order, FileStem(files[i]), BuildIconSpec(full, 0));
+            UINT dllOrder = 0;
+            for (UINT iconIndex = 0; iconIndex < iconCount; iconIndex++)
+            {
+                WCHAR label[64];
+                swprintf_s(label, _countof(label), L"Icon %03u", iconIndex);
+                std::wstring iconSpec = BuildIconSpec(full, (int)iconIndex);
+                std::wstring command = BuildResourceCommand(exePath, full, (int)iconIndex);
+                AddCommandItem(dllShell, dllOrder, label, iconSpec, command, FALSE);
+            }
+            RegCloseKey(dllShell);
+        }
+    }
 }
-else
-{
-std::wstring full = dirPath + L"\\" + fd.cFileName;
-if (HasExt(full, L".ico") || HasExt(full, L".dll"))
-files.push_back(fd.cFileName);
-}
-}
-while (FindNextFileW(hFind, &fd));
-
-FindClose(hFind);
-
-auto sortNoCase = [](const std::wstring& a, const std::wstring& b)
-{
-return _wcsicmp(a.c_str(), b.c_str()) < 0;
-};
-std::sort(directories.begin(), directories.end(), sortNoCase);
-std::sort(files.begin(), files.end(), sortNoCase);
-
-UINT order = 0;
-
-for (size_t i = 0; i < directories.size(); i++)
-{
-std::wstring full = dirPath + L"\\" + directories[i];
-if (!HasCustomItemsRecursive(full))
-continue;
-
-HKEY submenuShell = AddSubmenu(parentShellKey, order, directories[i], L"");
-WriteCustomEntries(submenuShell, full, exePath);
-RegCloseKey(submenuShell);
-}
-
-for (size_t i = 0; i < files.size(); i++)
-{
-std::wstring full = dirPath + L"\\" + files[i];
-if (HasExt(full, L".ico"))
-{
-std::wstring label = FileStem(files[i]);
-std::wstring command = BuildResourceCommand(exePath, full, 0);
-    AddCommandItem(parentShellKey, order, label, L"", command, FALSE);
-}
-else if (HasExt(full, L".dll"))
-{
-UINT iconCount = ExtractIconExW(full.c_str(), -1, NULL, NULL, 0);
-if ((iconCount == UINT_MAX) || (iconCount == 0))
-continue;
-
-HKEY dllShell = AddSubmenu(parentShellKey, order, FileStem(files[i]), BuildIconSpec(full, 0));
-UINT dllOrder = 0;
-for (UINT iconIndex = 0; iconIndex < iconCount; iconIndex++)
-{
-WCHAR label[64];
-swprintf_s(label, _countof(label), L"Icon %03u", iconIndex);
-std::wstring iconSpec = BuildIconSpec(full, (int) iconIndex);
-std::wstring command = BuildResourceCommand(exePath, full, (int) iconIndex);
-AddCommandItem(dllShell, dllOrder, label, iconSpec, command, FALSE);
-}
-RegCloseKey(dllShell);
-}
-}
-}
-
 
 /**
  * Expand an environment-variable path (e.g. %SystemRoot%\\...).
@@ -1299,7 +1251,6 @@ static std::wstring ExpandEnvPath(LPCWSTR envPath)
     return std::wstring(expanded);
 }
 
-
 /**
  * Add a DLL/EXE resource submenu under parentShellKey, splitting icons into
  * pages of SYSTEM_DLL_PAGE_SIZE to stay within Explorer's menu-item limits.
@@ -1307,8 +1258,8 @@ static std::wstring ExpandEnvPath(LPCWSTR envPath)
  */
 #define SYSTEM_DLL_PAGE_SIZE 40u
 
-static BOOL WriteSystemDllSubmenu(HKEY parentShellKey, UINT& order,
-                                  const std::wstring& exePath,
+static BOOL WriteSystemDllSubmenu(HKEY parentShellKey, UINT &order,
+                                  const std::wstring &exePath,
                                   LPCWSTR envPath, LPCWSTR label)
 {
     std::wstring filePath = ExpandEnvPath(envPath);
@@ -1337,8 +1288,8 @@ static BOOL WriteSystemDllSubmenu(HKEY parentShellKey, UINT& order,
             swprintf_s(iconLabel, _countof(iconLabel), L"Icon %03u", idx);
             AddCommandItem(dllShell, dllOrder,
                            iconLabel,
-                           BuildIconSpec(filePath, (int) idx),
-                           BuildResourceCommand(exePath, filePath, (int) idx),
+                           BuildIconSpec(filePath, (int)idx),
+                           BuildResourceCommand(exePath, filePath, (int)idx),
                            FALSE);
         }
     }
@@ -1349,14 +1300,14 @@ static BOOL WriteSystemDllSubmenu(HKEY parentShellKey, UINT& order,
         for (UINT page = 0; page < pageCount; page++)
         {
             UINT firstIdx = page * SYSTEM_DLL_PAGE_SIZE;
-            UINT lastIdx  = min(firstIdx + SYSTEM_DLL_PAGE_SIZE, iconCount) - 1;
+            UINT lastIdx = min(firstIdx + SYSTEM_DLL_PAGE_SIZE, iconCount) - 1;
 
             WCHAR pageLabel[64];
             swprintf_s(pageLabel, _countof(pageLabel), L"%03u-%03u", firstIdx, lastIdx);
 
             HKEY pageShell = AddSubmenu(dllShell, pageOrder,
                                         pageLabel,
-                                        BuildIconSpec(filePath, (int) firstIdx));
+                                        BuildIconSpec(filePath, (int)firstIdx));
             UINT itemOrder = 0;
             for (UINT idx = firstIdx; idx <= lastIdx; idx++)
             {
@@ -1364,8 +1315,8 @@ static BOOL WriteSystemDllSubmenu(HKEY parentShellKey, UINT& order,
                 swprintf_s(iconLabel, _countof(iconLabel), L"Icon %03u", idx);
                 AddCommandItem(pageShell, itemOrder,
                                iconLabel,
-                               BuildIconSpec(filePath, (int) idx),
-                               BuildResourceCommand(exePath, filePath, (int) idx),
+                               BuildIconSpec(filePath, (int)idx),
+                               BuildResourceCommand(exePath, filePath, (int)idx),
                                FALSE);
             }
             RegCloseKey(pageShell);
@@ -1376,26 +1327,29 @@ static BOOL WriteSystemDllSubmenu(HKEY parentShellKey, UINT& order,
     return TRUE;
 }
 
-
 /**
  * Write the "System" submenu with one child submenu per common Windows
  * resource DLL/EXE.  Placed immediately after the "Colors" submenu.
  */
-static void WriteSystemIconsMenu(HKEY shellKey, UINT& order, const std::wstring& exePath)
+static void WriteSystemIconsMenu(HKEY shellKey, UINT &order, const std::wstring &exePath)
 {
-    struct SysEntry { LPCWSTR envPath; LPCWSTR label; };
-    static const SysEntry sysEntries[] =
+    struct SysEntry
     {
-        { L"%SystemRoot%\\System32\\imageres.dll",         L"Windows Icon Library (imageres.dll)"         },
-        { L"%SystemRoot%\\System32\\shell32.dll",          L"Windows Shell Core (shell32.dll)"            },
-        { L"%SystemRoot%\\System32\\pifmgr.dll",           L"Legacy Program Icons (pifmgr.dll)"           },
-        { L"%SystemRoot%\\System32\\ddores.dll",           L"Device Category Resources (ddores.dll)"      },
-        { L"%SystemRoot%\\System32\\accessibilitycpl.dll", L"Ease of Access (accessibilitycpl.dll)"       },
-        { L"%SystemRoot%\\System32\\mmres.dll",            L"Audio Resources (mmres.dll)"                 },
-        { L"%SystemRoot%\\System32\\netshell.dll",         L"Network Connections (netshell.dll)"          },
-        { L"%SystemRoot%\\explorer.exe",                     L"File Explorer Shell (explorer.exe)"          },
-        { L"%SystemRoot%\\System32\\wmploc.DLL",           L"Media Player Resources (wmploc.dll)"         },
+        LPCWSTR envPath;
+        LPCWSTR label;
     };
+    static const SysEntry sysEntries[] =
+        {
+            {L"%SystemRoot%\\System32\\imageres.dll", L"Windows Icon Library (imageres.dll)"},
+            {L"%SystemRoot%\\System32\\shell32.dll", L"Windows Shell Core (shell32.dll)"},
+            {L"%SystemRoot%\\System32\\pifmgr.dll", L"Legacy Program Icons (pifmgr.dll)"},
+            {L"%SystemRoot%\\System32\\ddores.dll", L"Device Category Resources (ddores.dll)"},
+            {L"%SystemRoot%\\System32\\accessibilitycpl.dll", L"Ease of Access (accessibilitycpl.dll)"},
+            {L"%SystemRoot%\\System32\\mmres.dll", L"Audio Resources (mmres.dll)"},
+            {L"%SystemRoot%\\System32\\netshell.dll", L"Network Connections (netshell.dll)"},
+            {L"%SystemRoot%\\explorer.exe", L"File Explorer Shell (explorer.exe)"},
+            {L"%SystemRoot%\\System32\\wmploc.DLL", L"Media Player Resources (wmploc.dll)"},
+        };
 
     /* Use imageres icon 109 (settings/tools) as the System submenu icon. */
     std::wstring sysIcon = ExpandEnvPath(L"%SystemRoot%\\System32\\imageres.dll");
@@ -1409,57 +1363,55 @@ static void WriteSystemIconsMenu(HKEY shellKey, UINT& order, const std::wstring&
     RegCloseKey(sysShell);
 }
 
-
 // Write our shell registry
 static void InstallRegistry()
 {
-// Delete our existing key if it's already there
-if (!DeleteRegistryPath(HKEY_CLASSES_ROOT, REGISTRY_PATH))
-CRITICAL_API_FAIL(DeleteRegistryPath, GetLastError());
-if (!DeleteRegistryPath(HKEY_CLASSES_ROOT, FOLDER_PROGID))
-CRITICAL_API_FAIL(DeleteRegistryPath, GetLastError());
+    // Delete our existing key if it's already there
+    if (!DeleteRegistryPath(HKEY_CLASSES_ROOT, REGISTRY_PATH))
+        CRITICAL_API_FAIL(DeleteRegistryPath, GetLastError());
+    if (!DeleteRegistryPath(HKEY_CLASSES_ROOT, FOLDER_PROGID))
+        CRITICAL_API_FAIL(DeleteRegistryPath, GetLastError());
 
-// Root: HKEY_CLASSES_ROOT\Directory\shell\Foldrion
-HKEY rootKey = NULL;
-LSTATUS lStatus = RegCreateKeyExA(HKEY_CLASSES_ROOT, REGISTRY_PATH, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &rootKey, NULL);
-if (lStatus != ERROR_SUCCESS)
-CRITICAL_API_FAIL(RegCreateKeyExA, lStatus);
+    // Root: HKEY_CLASSES_ROOT\Directory\shell\Foldrion
+    HKEY rootKey = NULL;
+    LSTATUS lStatus = RegCreateKeyExA(HKEY_CLASSES_ROOT, REGISTRY_PATH, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &rootKey, NULL);
+    if (lStatus != ERROR_SUCCESS)
+        CRITICAL_API_FAIL(RegCreateKeyExA, lStatus);
 
-std::wstring exePath = BuildInstalledExePath();
+    std::wstring exePath = BuildInstalledExePath();
 
-// Root: "Customization" submenu visible on ALL folders via Directory\shell\Foldrion.
-// SubCommands="" marks it as a submenu container (never a default verb).
-WriteRegSzWOrFail(rootKey, L"MUIVerb", L"Customization");
-WriteRegSzWOrFail(rootKey, L"Icon", exePath);
-WriteRegSzWOrFail(rootKey, L"SubCommands", L"");
+    // Root: "Customization" submenu visible on ALL folders via Directory\shell\Foldrion.
+    // SubCommands="" marks it as a submenu container (never a default verb).
+    WriteRegSzWOrFail(rootKey, L"MUIVerb", L"Customization");
+    WriteRegSzWOrFail(rootKey, L"Icon", exePath);
+    WriteRegSzWOrFail(rootKey, L"SubCommands", L"");
 
-HKEY rootShellKey = CreateSubKeyWOrFail(rootKey, L"shell");
-RegCloseKey(rootKey);
+    HKEY rootShellKey = CreateSubKeyWOrFail(rootKey, L"shell");
+    RegCloseKey(rootKey);
 
-WCHAR pickCmd[2048];
-if (_snwprintf_s(pickCmd, _countof(pickCmd), (_countof(pickCmd) - 1),
-	L"\"%s\" --pick --folder \"%%1\"", exePath.c_str()) < 1)
-	CRITICAL("Path size limit error!");
+    WCHAR pickCmd[2048];
+    if (_snwprintf_s(pickCmd, _countof(pickCmd), (_countof(pickCmd) - 1),
+                     L"\"%s\" --pick --folder \"%%1\"", exePath.c_str()) < 1)
+        CRITICAL("Path size limit error!");
 
-UINT order = 0;
-AddCommandItem(rootShellKey, order, L"Customize Folder", exePath, pickCmd, FALSE);
-AddCommandItem(rootShellKey, order, L"Restore Default", exePath,
-	BuildBuiltInCommand(exePath, COLOR_ICON_COUNT), FALSE);
+    UINT order = 0;
+    AddCommandItem(rootShellKey, order, L"Customize Folder", exePath, pickCmd, FALSE);
+    AddCommandItem(rootShellKey, order, L"Restore Default", exePath,
+                   BuildBuiltInCommand(exePath, COLOR_ICON_COUNT), FALSE);
 
-RegCloseKey(rootShellKey);
+    RegCloseKey(rootShellKey);
 
-// Folder type for directories customized by Foldrion through desktop.ini.
-// No shell entries needed here — menu is handled globally via Directory\shell\Foldrion.
-HKEY folderProgIdKey = NULL;
-lStatus = RegCreateKeyExA(HKEY_CLASSES_ROOT, FOLDER_PROGID, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &folderProgIdKey, NULL);
-if (lStatus != ERROR_SUCCESS)
-CRITICAL_API_FAIL(RegCreateKeyExA, lStatus);
+    // Folder type for directories customized by Foldrion through desktop.ini.
+    // No shell entries needed here — menu is handled globally via Directory\shell\Foldrion.
+    HKEY folderProgIdKey = NULL;
+    lStatus = RegCreateKeyExA(HKEY_CLASSES_ROOT, FOLDER_PROGID, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &folderProgIdKey, NULL);
+    if (lStatus != ERROR_SUCCESS)
+        CRITICAL_API_FAIL(RegCreateKeyExA, lStatus);
 
-WriteRegSzWOrFail(folderProgIdKey, NULL, L"Foldrion Custom Folder");
-WriteRegSzWOrFail(folderProgIdKey, L"CanUseForDirectory", L"");
-RegCloseKey(folderProgIdKey);
+    WriteRegSzWOrFail(folderProgIdKey, NULL, L"Foldrion Custom Folder");
+    WriteRegSzWOrFail(folderProgIdKey, L"CanUseForDirectory", L"");
+    RegCloseKey(folderProgIdKey);
 }
-
 
 /**
  * Rebuild shell registry entries and notify shell changes without restarting Explorer.
@@ -1481,46 +1433,44 @@ void RefreshInstalledShellMenu()
 // Install ourself
 void Install()
 {
-InstallCore(FALSE);
+    InstallCore(FALSE);
 }
-
 
 // Uninstall ourself
 // Returns 0 = Needs manual uninstall step, 1 = complete
 int Uninstall()
 {
-// Remove our registry key
-DeleteRegistryPath(HKEY_CLASSES_ROOT, REGISTRY_PATH);
-DeleteRegistryPath(HKEY_CLASSES_ROOT, FOLDER_PROGID);
-RemoveStartMenuShortcut();
-ResetWindowsIconCache();
+    // Remove our registry key
+    DeleteRegistryPath(HKEY_CLASSES_ROOT, REGISTRY_PATH);
+    DeleteRegistryPath(HKEY_CLASSES_ROOT, FOLDER_PROGID);
+    RemoveStartMenuShortcut();
+    ResetWindowsIconCache();
 
-// Double check the path to avoid a disaster
-if (wcsstr(myPathGlobal, INSTALL_FOLDER))
-{
-// Copy of our path without ending backslash and to be double terminated
-WCHAR myPathCopy[MAX_PATH + 1];
-ZeroMemory(myPathCopy, sizeof(myPathCopy));
-if (wcsncpy_s(myPathCopy, MAX_PATH, myPathGlobal, wcslen(myPathGlobal) - 1) == 0)
-{
-// No, recursively delete our installation folder
-// Note: Might fail (return = 2) while debug stepping, but then fine in release for what ever reason..
-SHFILEOPSTRUCTW nfo =
-{
-NULL,
-FO_DELETE,
-myPathCopy,
-NULL,
-(FOF_NO_UI | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT | FOF_ALLOWUNDO),
-FALSE,
-NULL,
-NULL
-};
-SHFileOperationW(&nfo);
-}
-}
+    // Double check the path to avoid a disaster
+    if (wcsstr(myPathGlobal, INSTALL_FOLDER))
+    {
+        // Copy of our path without ending backslash and to be double terminated
+        WCHAR myPathCopy[MAX_PATH + 1];
+        ZeroMemory(myPathCopy, sizeof(myPathCopy));
+        if (wcsncpy_s(myPathCopy, MAX_PATH, myPathGlobal, wcslen(myPathGlobal) - 1) == 0)
+        {
+            // No, recursively delete our installation folder
+            // Note: Might fail (return = 2) while debug stepping, but then fine in release for what ever reason..
+            SHFILEOPSTRUCTW nfo =
+                {
+                    NULL,
+                    FO_DELETE,
+                    myPathCopy,
+                    NULL,
+                    (FOF_NO_UI | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT | FOF_ALLOWUNDO),
+                    FALSE,
+                    NULL,
+                    NULL};
+            SHFileOperationW(&nfo);
+        }
+    }
 
-// Return 0 if installation folder is still there
-DWORD attr = GetFileAttributesW(myPathGlobal);
-return !((attr != INVALID_FILE_ATTRIBUTES) && (attr & FILE_ATTRIBUTE_DIRECTORY));
+    // Return 0 if installation folder is still there
+    DWORD attr = GetFileAttributesW(myPathGlobal);
+    return !((attr != INVALID_FILE_ATTRIBUTES) && (attr & FILE_ATTRIBUTE_DIRECTORY));
 }
